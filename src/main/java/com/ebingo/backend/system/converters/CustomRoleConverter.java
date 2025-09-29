@@ -27,7 +27,7 @@ public class CustomRoleConverter implements Converter<Jwt, Collection<GrantedAut
 
     @Override
     public Collection<GrantedAuthority> convert(Jwt jwt) {
-        log.info("===============================================================>>> Converting roles for user: " + jwt.getClaim("email"));
+//        log.info("===============================================================>>> Converting roles for user: " + jwt.getClaim("email"));
         Set<String> roles = new HashSet<>();
 
 
@@ -41,7 +41,9 @@ public class CustomRoleConverter implements Converter<Jwt, Collection<GrantedAut
         // 2) a custom array claim named "roles" or "app_roles"
         Object rolesClaim = jwt.getClaim("roles");
         if (rolesClaim instanceof Collection) {
-            ((Collection<?>) rolesClaim).forEach(r -> { if (r != null) roles.add(r.toString()); });
+            ((Collection<?>) rolesClaim).forEach(r -> {
+                if (r != null) roles.add(r.toString());
+            });
         }
 
 

@@ -1,12 +1,12 @@
 package com.ebingo.backend.user.service;
 
-import com.ebingo.backend.payment.service.WalletService;
 import com.ebingo.backend.system.exceptions.ResourceNotFoundException;
 import com.ebingo.backend.user.dto.UserProfileCreateDto;
 import com.ebingo.backend.user.dto.UserProfileDto;
 import com.ebingo.backend.user.entity.UserProfile;
 import com.ebingo.backend.user.mappers.UserProfileMapper;
 import com.ebingo.backend.user.repository.UserProfileRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.ReactiveTransactionManager;
@@ -17,18 +17,12 @@ import java.util.UUID;
 
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class UserProfileServiceImpl implements UserProfileService {
 
     private final UserProfileRepository userProfileRepository;
-    private final WalletService walletService;
     private final ReactiveTransactionManager transactionManager;
 
-    public UserProfileServiceImpl(UserProfileRepository userProfileRepository,
-                                  WalletService walletService, ReactiveTransactionManager transactionManager) {
-        this.userProfileRepository = userProfileRepository;
-        this.walletService = walletService;
-        this.transactionManager = transactionManager;
-    }
 
     @Override
     public Mono<UserProfileDto> getUserProfileBySupabaseId(UUID supabaseId) {
@@ -36,10 +30,7 @@ public class UserProfileServiceImpl implements UserProfileService {
 
         return userProfileRepository.findBySupabaseId(supabaseId)
                 .switchIfEmpty(Mono.error(new ResourceNotFoundException("User not found")))
-                .flatMap(userProfile ->
-                        walletService.getWalletByUserProfileId(userProfile.getId())
-                                .map(walletDto -> UserProfileMapper.toDto(userProfile, walletDto))
-                );
+                .map(UserProfileMapper::toDto);
     }
 
     @Override
@@ -50,13 +41,12 @@ public class UserProfileServiceImpl implements UserProfileService {
 
         TransactionalOperator operator = TransactionalOperator.create(transactionManager);
 
-        Mono<UserProfileDto> mono = userProfileRepository.save(userProfile)
-                .flatMap(savedUser ->
-                        walletService.createWallet(savedUser)
-                                .map(walletDto -> UserProfileMapper.toDto(savedUser, walletDto))
-                ).doOnError(e -> log.error("Error creating user profile: {}", userProfileDto, e));
-
-        return mono.as(operator::transactional);
+        return userProfileRepository.save(userProfile)
+                .map(UserProfileMapper::toDto)
+                .doOnSuccess(saved -> log.info("User profile created successfully: {}", saved))
+                .doOnError(e -> log.error("Error creating user profile: {}", userProfileDto, e))
+                .as(operator::transactional);
     }
+
 
 }

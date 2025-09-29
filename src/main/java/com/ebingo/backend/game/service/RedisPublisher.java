@@ -46,7 +46,7 @@ public class RedisPublisher {
     }
 
     // New user-specific method
-    public Mono<Long> publishUserEvent(Long userId, Map<String, Object> message) {
+    public Mono<Long> publishUserEvent(String userId, Map<String, Object> message) {
         String userChannel = RedisKeys.userChannel(userId);
         String messageJson = null;
         try {

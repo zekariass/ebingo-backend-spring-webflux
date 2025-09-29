@@ -1,6 +1,7 @@
 services:
   postgres-bingo:
     image: postgres:17.6
+    container_name: ebingo-db
     environment:
       POSTGRES_DB: "${EBINGO_DB_NAME}"
       POSTGRES_USER: "${EBINGO_DB_USER}"
@@ -10,7 +11,7 @@ services:
     volumes:
       - postgres_data_ebingo:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      test: [ "CMD-SHELL", "pg_isready -U ebingo-db" ]
       interval: 10s
       timeout: 5s
       retries: 5

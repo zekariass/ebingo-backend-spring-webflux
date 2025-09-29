@@ -82,6 +82,8 @@ public class CardPoolService {
 //    }
     public Mono<List<CardInfo>> generateAndStoreCurrentPool(Long roomId, int capacity) {
         // 1. Generate the card pool synchronously
+        log.info("============CardPoolService========================>>> CAPACITY RECEIVED {}", capacity);
+
         List<CardInfo> cards = BingoCardGenerator.generateCardPool(capacity)
                 .stream()
                 .map(card -> new CardInfo(UUID.randomUUID().toString(), card, new HashSet<>()))
@@ -93,15 +95,18 @@ public class CardPoolService {
                 .flatMap(json -> redis.opsForValue().set(RedisKeys.currentCardPoolKey(roomId), json))
                 .then();
 
+
         // 3. Serialize and store each card individually in parallel
         Flux<Void> storeCardsFlux = Flux.fromIterable(cards)
                 .flatMap(card ->
                                 Mono.fromCallable(() -> mapper.writeValueAsString(card))
                                         .subscribeOn(Schedulers.boundedElastic())
                                         .flatMap(cj ->
-                                                redis.opsForValue().set(RedisKeys.roomCardKey(roomId, card.getCardId()), cj)
-                                                        .then(redis.opsForSet().add(RedisKeys.roomCardsSetKey(roomId), card.getCardId()))
+                                                        redis.opsForValue().set(RedisKeys.roomCardKey(roomId, card.getCardId()), cj)
+//                                                        .then(redis.expire(RedisKeys.roomCardKey(roomId, card.getCardId()), Duration.ofDays(1)))
+                                                                .then(redis.opsForSet().add(RedisKeys.roomCardsSetKey(roomId), card.getCardId()))
                                         )
+//                                        .then(redis.expire(RedisKeys.roomCardsSetKey(roomId), Duration.ofDays(1)))
                         , 10) // parallelism = 10, adjust as needed
                 .thenMany(Flux.empty()); // we only care about completion
 
@@ -228,4 +233,17 @@ public class CardPoolService {
     }
 
 
+    public Mono<Set<String>> getAllCardIds(Long roomId) {
+        String roomCardsSetKey = RedisKeys.roomCardsSetKey(roomId);
+        return setOps.members(roomCardsSetKey)
+                .map(Object::toString)
+                .collect(Collectors.toCollection(HashSet::new));
+    }
+
+//    public Mono<Set<String>> getPlayerCardsIds(Long gameId, String userId) {
+//        String playerCardsKey = RedisKeys.playerCardsIdsKey(gameId, userId);
+//        return setOps.members(playerCardsKey)
+//                .map(Object::toString)
+//                .collect(Collectors.toCollection(HashSet::new));
+//    }
 }

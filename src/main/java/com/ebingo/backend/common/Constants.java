@@ -26,6 +26,7 @@ public final class Constants {
             "/webjars/**",
             "/docs",
             "/api/v1/secured/billing/payment/chapa/webhook",
-            "/api/v1/secured/billing/payment/pesapal/IPN"
+            "/api/v1/secured/billing/payment/pesapal/IPN",
+            "ws://localhost:8080/ws/game"
     );
 }

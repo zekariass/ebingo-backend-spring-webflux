@@ -6,10 +6,7 @@ import lombok.Data;
 import lombok.ToString;
 import reactor.core.publisher.Mono;
 
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -24,17 +21,21 @@ public class GameState {
     private Long roomId;
 
     // Players in the game
-    private final Set<Long> joinedPlayers = ConcurrentHashMap.newKeySet();
+    private final Set<String> joinedPlayers = ConcurrentHashMap.newKeySet();
 
     // Numbers that have been drawn in the game (order matters)
     private final Set<Integer> drawnNumbers = new LinkedHashSet<>();
 
     // Users disqualified due to false bingo claims
-    private final Set<Long> disqualifiedUsers = ConcurrentHashMap.newKeySet();
+    private final Set<String> disqualifiedUsers = ConcurrentHashMap.newKeySet();
+
+    // Read from Player State
+    private final Set<String> userSelectedCardsIds = new LinkedHashSet<>();
 
     // Card Pool
     private final List<CardInfo> currentCardPool = new ArrayList<>();
     private final List<CardInfo> nextCardPool = new ArrayList<>();
+    private final Set<String> allCardIds = new HashSet<>();
 
     // Game status flags
     private volatile boolean started = false;       // only one writer -> fine as volatile
@@ -59,10 +60,15 @@ public class GameState {
     // ---------------------------
 
 
-    public void setJoinedPlayers(Set<Long> userIds) {
+    public void setJoinedPlayers(Set<String> userIds) {
         joinedPlayers.clear();
 //        return Mono.fromSupplier(() -> joinedPlayers.addAll(userIds));
         joinedPlayers.addAll(userIds);
+    }
+
+    public void setAllCardIds(Set<String> cardIds) {
+        allCardIds.clear();
+        allCardIds.addAll(cardIds);
     }
 
     /**
@@ -80,11 +86,11 @@ public class GameState {
     /**
      * Disqualify a player.
      */
-    public void disqualifyPlayer(Long userId) {
+    public void disqualifyPlayer(String userId) {
         disqualifiedUsers.add((userId));
     }
 
-    public void setDisqualifiedPlayers(Set<Long> userIds) {
+    public void setDisqualifiedPlayers(Set<String> userIds) {
         disqualifiedUsers.clear();
         disqualifiedUsers.addAll(userIds);
     }
@@ -97,6 +103,15 @@ public class GameState {
             currentCardPool.clear();
             currentCardPool.addAll(newPool);
         });
+    }
+
+    public void setUserSelectedCardsIds(Set<String> cardIds) {
+        userSelectedCardsIds.clear();
+        userSelectedCardsIds.addAll(cardIds);
+    }
+
+    public Set<String> getUserSelectedCardsIds() {
+        return Collections.unmodifiableSet(userSelectedCardsIds);
     }
 
 //    public Mono<Void> setNextCardPool(List<CardInfo> newPool) {

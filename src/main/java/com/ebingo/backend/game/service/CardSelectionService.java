@@ -151,8 +151,9 @@ public class CardSelectionService {
 //    }
 
 
-    public Mono<Void> claimCard(Long roomId, Long gameId, Long userId, String cardId, int maxCardsPerPlayer) {
+    public Mono<Void> claimCard(Long roomId, Long gameId, String userId, String cardId, int maxCardsPerPlayer) {
         if (cardId == null) {
+            log.info("==============> Cannot claim card: Card ID is null for user {} in room {}", userId, roomId);
             return publishCardError(roomId, userId, null, "Card ID cannot be null", "INVALID_CARD_ID");
         }
 
@@ -169,7 +170,7 @@ public class CardSelectionService {
                     }
 
                     return redis.execute(SCRIPT, List.of(ownerKey, userOwnedCardsKey, cardLockKey, userLockKey),
-                                    cardId, userId.toString(), String.valueOf(maxCardsPerPlayer), String.valueOf(lockTtlSeconds))
+                                    cardId, userId, String.valueOf(maxCardsPerPlayer), String.valueOf(lockTtlSeconds))
                             .next()
                             .flatMap(result -> {
                                 if (result == null) {
@@ -181,6 +182,8 @@ public class CardSelectionService {
                                     case "OK" -> cardPoolService.getCard(roomId, cardId)
                                             .flatMap(card -> playerStateService.savePlayerCard(gameId, userId, cardId, card)
                                                     .doOnSuccess(v -> log.info("User {} successfully claimed card {} in room {}", userId, cardId, roomId))
+                                                    .then(playerStateService.addPlayerCardId(gameId, userId, cardId)
+                                                            .doOnSuccess(v -> log.info("Added cardId {} to player {}'s state in game {}", cardId, userId, gameId)))
                                                     .then(cardPoolService.addSelectedCard(gameId, cardId))
                                                     .flatMap(selectedCards -> publishSuccess(roomId, cardId, userId, selectedCards))
                                             );
@@ -248,7 +251,7 @@ public class CardSelectionService {
 
     private static final RedisScript<String> RELEASE_SCRIPT_OBJ = RedisScript.of(RELEASE_SCRIPT, String.class);
 
-    public Mono<Void> releaseCard(Long roomId, Long gameId, Long userId, String cardId) {
+    public Mono<Void> releaseCard(Long roomId, Long gameId, String userId, String cardId) {
         String ownerKey = RedisKeys.cardOwnerKey(gameId, cardId);
         String userOwnedKey = RedisKeys.userOwnedCardsKey(gameId, userId);
         String cardLockKey = RedisKeys.cardLockKey(gameId, cardId);
@@ -257,7 +260,7 @@ public class CardSelectionService {
         int lockTtlSeconds = 5; // Shorter TTL for release operations
 
         return redis.execute(RELEASE_SCRIPT_OBJ, List.of(ownerKey, userOwnedKey, cardLockKey, userLockKey),
-                        cardId, userId.toString(), String.valueOf(lockTtlSeconds))
+                        cardId, userId, String.valueOf(lockTtlSeconds))
                 .next()
                 .flatMap(result -> {
                     if (result == null) {
@@ -268,10 +271,12 @@ public class CardSelectionService {
 
                     return switch (result) {
                         case "OK" -> cardPoolService.removeSelectedCard(gameId, cardId)
+                                .then(playerStateService.removePlayerCard(gameId, userId, cardId))
+                                .then(playerStateService.removePlayerCardId(gameId, userId, cardId))
                                 .then(cardPoolService.getSelectedCards(gameId)
                                         .flatMap(selectedCards -> {
 
-                                                    log.info("=======================CARDS====================>>>>, {}", selectedCards);
+//                                                    log.info("=======================CARDS====================>>>>, {}", selectedCards);
                                                     return handleSuccessfulRelease(roomId, gameId, userId, cardId, selectedCards);
                                                 }
                                         ));
@@ -329,7 +334,7 @@ public class CardSelectionService {
 //                                new RuntimeException("Failed to release card after retries")));
     }
 
-    private Mono<Void> handleSuccessfulRelease(Long roomId, Long gameId, Long userId, String cardId, Set<String> selectedCards) {
+    private Mono<Void> handleSuccessfulRelease(Long roomId, Long gameId, String userId, String cardId, Set<String> selectedCards) {
         return Mono.when(
                 playerStateService.removePlayerCard(gameId, userId, cardId),
                 publishCardReleased(roomId, cardId, userId, selectedCards),
@@ -337,7 +342,7 @@ public class CardSelectionService {
         ).then();
     }
 
-    private Mono<Void> handleReleaseError(Long roomId, Long gameId, Long userId, String cardId, String errorCode) {
+    private Mono<Void> handleReleaseError(Long roomId, Long gameId, String userId, String cardId, String errorCode) {
         return publishCardError(roomId, userId, cardId, "Failed to release card: " + errorCode, errorCode);
     }
 
@@ -347,16 +352,16 @@ public class CardSelectionService {
                 error instanceof RedisTimeoutException;
     }
 
-    private Mono<Void> updateGameStateIfNeeded(Long roomId, Long gameId, Long userId) {
+    private Mono<Void> updateGameStateIfNeeded(Long roomId, Long gameId, String userId) {
         // Optional: Update game state if card release affects game logic
         return Mono.empty();
     }
 
 
-    private Mono<Void> publishSuccess(Long roomId, String cardId, Long userId, Set<String> selectedCards) {
+    private Mono<Void> publishSuccess(Long roomId, String cardId, String userId, Set<String> selectedCards) {
         return publisher.publishEvent(RedisKeys.roomChannel(roomId),
                 Map.of(
-                        "type", "cardSelected",
+                        "type", "game.cardSelected",
                         "payload", Map.of(
                                 "cardId", cardId,
                                 "userId", userId.toString(),
@@ -366,10 +371,10 @@ public class CardSelectionService {
                 )).then();
     }
 
-    private Mono<Void> publishCardReleased(Long roomId, String cardId, Long userId, Set<String> selectedCards) {
+    private Mono<Void> publishCardReleased(Long roomId, String cardId, String userId, Set<String> selectedCards) {
         return publisher.publishEvent(RedisKeys.roomChannel(roomId),
                 Map.of(
-                        "type", "cardReleased",
+                        "type", "game.cardReleased",
                         "payload", Map.of(
                                 "cardId", cardId,
                                 "userId", userId.toString(),
@@ -379,7 +384,7 @@ public class CardSelectionService {
                 )).then();
     }
 
-    private Mono<Void> cleanupLocks(Long roomId, String cardId, Long userId) {
+    private Mono<Void> cleanupLocks(Long roomId, String cardId, String userId) {
         String cardLockKey = RedisKeys.cardLockKey(roomId, cardId);
         String userLockKey = RedisKeys.userLockKey(roomId, userId);
 
@@ -395,7 +400,7 @@ public class CardSelectionService {
     }
 
 
-    public Mono<Void> claimCardWithRetry(Long roomId, Long gameId, Long userId, String cardId, int maxCardsPerPlayer) {
+    public Mono<Void> claimCardWithRetry(Long roomId, Long gameId, String userId, String cardId, int maxCardsPerPlayer) {
         return Mono.defer(() -> claimCard(roomId, gameId, userId, cardId, maxCardsPerPlayer))
                 .retryWhen(reactor.util.retry.Retry.backoff(3, Duration.ofMillis(200))
                         .filter(err -> {
@@ -416,7 +421,7 @@ public class CardSelectionService {
                 });
     }
 
-    private Mono<Void> publishCardError(Long roomId, Long userId, String cardId, String message, String errorType) {
+    private Mono<Void> publishCardError(Long roomId, String userId, String cardId, String message, String errorType) {
         return publisher.publishUserEvent(userId,
                 Map.of(
                         "type", "error",
@@ -485,7 +490,7 @@ public class CardSelectionService {
                 });
     }
 
-    public Mono<Boolean> forceReleaseUserLock(Long roomId, Long userId) {
+    public Mono<Boolean> forceReleaseUserLock(Long roomId, String userId) {
         String userLockKey = RedisKeys.userLockKey(roomId, userId);
         return redis.delete(userLockKey)
                 .map(count -> count > 0)

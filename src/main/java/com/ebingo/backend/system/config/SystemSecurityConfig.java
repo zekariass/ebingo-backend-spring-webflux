@@ -43,7 +43,7 @@ public class SystemSecurityConfig {
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .cors(cors -> cors.configurationSource(request -> {
                     CorsConfiguration config = new CorsConfiguration();
-                    config.setAllowedOrigins(Arrays.asList("http://localhost:4200", "http://localhost:8080"));
+                    config.setAllowedOrigins(Arrays.asList("http://localhost:4200", "http://localhost:8080", "http://localhost:3000"));
                     config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
                     config.setAllowCredentials(true);
                     config.setAllowedHeaders(Collections.singletonList("*"));
@@ -58,6 +58,7 @@ public class SystemSecurityConfig {
                 .authorizeExchange(exchanges -> exchanges
                         .pathMatchers(Constants.PUBLIC_API_ENDPOINTS_FOR_ACCESS.toArray(new String[0])).permitAll()
                         .pathMatchers("/api/v1/public/**").permitAll()
+                        .pathMatchers("/ws/**").permitAll()
                         .anyExchange().authenticated()
                 )
                 .oauth2ResourceServer(oauth2 -> oauth2
@@ -69,3 +70,4 @@ public class SystemSecurityConfig {
         return http.build();
     }
 }
+

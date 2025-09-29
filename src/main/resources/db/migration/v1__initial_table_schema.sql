@@ -104,20 +104,30 @@ CREATE INDEX idx_room_setting_room_id ON room_setting(room_id);
 CREATE TYPE game_status AS ENUM ('READY', 'PLAYING', 'COMPLETED', 'CANCELLED', 'CANCELLED_NO_MIN_PLAYERS');
 --Game is started when at least min_players have started. Initial status is READY. When game starts status changes to PLAYING. When a player wins and claims bingo, status changes to COMPLETED.
 
+
 CREATE TABLE game (
     id BIGSERIAL PRIMARY KEY,
-    game_reference VARCHAR(30) NOT NULL UNIQUE,
     room_id BIGINT NOT NULL,
-    status game_status NOT NULL DEFAULT 'READY',
-    called_numbers JSONB DEFAULT '[]'::jsonb,
-    prize_amount NUMERIC(12,2) DEFAULT 0,
+
+    joined_players TEXT, --JSONB DEFAULT '[]'::jsonb,
+    drawn_numbers TEXT, -- JSONB DEFAULT '[]'::jsonb,
+    disqualified_users TEXT, --JSONB DEFAULT '[]'::jsonb,
+    all_card_ids TEXT, --JSONB DEFAULT '[]'::jsonb,
+
+    started BOOLEAN NOT NULL DEFAULT FALSE,
+    ended BOOLEAN NOT NULL DEFAULT FALSE,
+    status VARCHAR(50) NOT NULL DEFAULT 'READY',
+    stop_number_drawing BOOLEAN NOT NULL DEFAULT FALSE,
+
     started_at TIMESTAMP,
     ended_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_game_room FOREIGN KEY (room_id) REFERENCES room(id) ON DELETE CASCADE,
-    CONSTRAINT uq_game_reference UNIQUE (game_reference)
+
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+
+    CONSTRAINT game_state_room FOREIGN KEY (room_id) REFERENCES room(id)
 );
+
 
 -- Indexes for game
 CREATE INDEX idx_game_room_id ON game(room_id);
@@ -191,9 +201,15 @@ CREATE TABLE payment_method (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     description TEXT,
+    is_default boolean,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE UNIQUE INDEX idx_default_payment_method
+ON payment_method (is_default)
+WHERE is_default = true;
+
 
 -- transaction Table
 CREATE TABLE transaction (
@@ -288,24 +304,36 @@ CREATE INDEX idx_system_config_name ON system_config(name);
 
 CREATE TABLE wallet (
     id BIGSERIAL PRIMARY KEY,
-    user_profile_id BIGINT NOT NULL,
-    available_balance NUMERIC(12, 2) NOT NULL DEFAULT 0,
-    pending_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
-    current_total NUMERIC(12, 2) GENERATED ALWAYS AS (available_balance + pending_amount) STORED,
-    overall_total NUMERIC(12, 2) NOT NULL DEFAULT 0,
-    welcome_bonus NUMERIC(12, 2) NOT NULL DEFAULT 0,
-    bonus_balance NUMERIC(12, 2) NOT NULL DEFAULT 0,
-    total_prize_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+
+    user_profile_id BIGINT NOT NULL REFERENCES user_profile(id) ON DELETE CASCADE,
+
+    total_deposit NUMERIC(18,2) DEFAULT 0.00 NOT NULL,
+    deposit_balance NUMERIC(18,2) DEFAULT 0.00 NOT NULL,
+    pending_balance NUMERIC(18,2) DEFAULT 0.00 NOT NULL,
+
+    welcome_bonus NUMERIC(18,2) DEFAULT 0.00 NOT NULL,
+    available_welcome_bonus NUMERIC(18,2) DEFAULT 0.00 NOT NULL,
+
+    referral_bonus NUMERIC(18,2) DEFAULT 0.00 NOT NULL,
+    available_referral_bonus NUMERIC(18,2) DEFAULT 0.00 NOT NULL,
+
+    total_prize_amount NUMERIC(18,2) DEFAULT 0.00 NOT NULL,
+
+    pending_withdrawal NUMERIC(18,2) DEFAULT 0.00 NOT NULL,
+    total_withdrawal NUMERIC(18,2) DEFAULT 0.00 NOT NULL,
+
+    total_available_balance NUMERIC(18,2) DEFAULT 0.00 NOT NULL,
+    available_to_withdraw NUMERIC(18,2) DEFAULT 0.00 NOT NULL,
+
     created_by BIGINT,
     updated_by BIGINT,
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uq_wallet_user UNIQUE (user_profile_id),
-    CONSTRAINT fk_wallet_user_profile FOREIGN KEY (user_profile_id) REFERENCES user_profile(id) ON DELETE RESTRICT,
-    CONSTRAINT fk_wallet_created_by FOREIGN KEY (created_by) REFERENCES user_profile(id) ON DELETE RESTRICT,
-    CONSTRAINT fk_wallet_updated_by FOREIGN KEY (updated_by) REFERENCES user_profile(id) ON DELETE RESTRICT
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE UNIQUE INDEX idx_wallet_user_profile_id ON wallet(user_profile_id);
+
 
 CREATE INDEX idx_wallet_user_profile_id ON wallet(user_profile_id);
 

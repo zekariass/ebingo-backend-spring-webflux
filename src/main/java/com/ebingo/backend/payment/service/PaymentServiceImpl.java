@@ -19,14 +19,14 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     @Override
-    public Mono<Boolean> processPayment(Long userId, BigDecimal amount) {
+    public Mono<Boolean> processPayment(String userId, BigDecimal amount) {
         // Implement payment processing logic here
         log.info("======================================>> Processing payment!");
         return Mono.just(true); // Placeholder implementation
     }
 
     @Override
-    public Mono<Boolean> processRefund(Long userId, BigDecimal amount) {
+    public Mono<Boolean> processRefund(String userId, BigDecimal amount) {
         return Mono.just(true); // Placeholder implementation
     }
 }

@@ -213,7 +213,7 @@ public class PlayerStateService {
     /**
      * Retrieve the player's state by combining cards and marked numbers.
      */
-    public Mono<PlayerState> getPlayerState(Long gameId, Long userId) {
+    public Mono<PlayerState> getPlayerState(Long gameId, String userId) {
         String cardsKey = RedisKeys.playerCardsKey(gameId, userId);
 
         return hashOps.entries(cardsKey)
@@ -239,7 +239,7 @@ public class PlayerStateService {
     /**
      * Save or update a single card and its marked numbers.
      */
-    public Mono<Boolean> savePlayerCard(Long gameId, Long userId, String cardId, CardInfo bingoCard) {
+    public Mono<Boolean> savePlayerCard(Long gameId, String userId, String cardId, CardInfo bingoCard) {
         String cardsKey = RedisKeys.playerCardsKey(gameId, userId);
 
         return hashOps.put(cardsKey, cardId, bingoCard)
@@ -255,7 +255,7 @@ public class PlayerStateService {
     /**
      * Fetch all cards for a player, including marked numbers.
      */
-    public Mono<Map<String, CardInfo>> getPlayerCards(Long gameId, Long userId) {
+    public Mono<Map<String, CardInfo>> getPlayerCards(Long gameId, String userId) {
         String cardsKey = RedisKeys.playerCardsKey(gameId, userId);
 
         return hashOps.entries(cardsKey)
@@ -271,10 +271,41 @@ public class PlayerStateService {
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
+    public Mono<Boolean> addPlayerCardId(Long gameId, String userId, String cardId) {
+        String cardsKey = RedisKeys.playerCardsIdsKey(gameId, userId);
+        return setOps.add(cardsKey, cardId)
+                .then(redis.expire(cardsKey, PLAYER_STATE_TTL))
+                .thenReturn(true)
+                .onErrorResume(e -> {
+                    log.error("Failed to add player card ID {} for user {} in game {}: {}",
+                            cardId, userId, gameId, e.getMessage(), e);
+                    return Mono.just(false);
+                });
+    }
+
+
+    public Mono<Boolean> removePlayerCardId(Long gameId, String userId, String cardId) {
+        String cardsKey = RedisKeys.playerCardsIdsKey(gameId, userId);
+        return setOps.remove(cardsKey, cardId)
+                .thenReturn(true)
+                .onErrorResume(e -> {
+                    log.error("Failed to remove player card ID {} for user {} in game {}: {}",
+                            cardId, userId, gameId, e.getMessage(), e);
+                    return Mono.just(false);
+                });
+    }
+
+
+    public Mono<Set<String>> getPlayerCardIds(Long gameId, String userId) {
+        String cardsKey = RedisKeys.playerCardsIdsKey(gameId, userId);
+        return setOps.members(cardsKey)
+                .collect(Collectors.toSet());
+    }
+
     /**
      * Fetch marked numbers for a specific card.
      */
-    public Mono<Set<Integer>> getMarkedNumbers(Long roomId, Long userId, String cardId) {
+    public Mono<Set<Integer>> getMarkedNumbers(Long roomId, String userId, String cardId) {
         String markedKey = RedisKeys.playerMarkedNumbersKey(roomId, userId, cardId);
         return setOps.members(markedKey)
                 .map(Integer::valueOf)
@@ -284,7 +315,7 @@ public class PlayerStateService {
     /**
      * Remove a specific card from player's collection.
      */
-    public Mono<Boolean> removePlayerCard(Long gameId, Long userId, String cardId) {
+    public Mono<Boolean> removePlayerCard(Long gameId, String userId, String cardId) {
         String cardsKey = RedisKeys.playerCardsKey(gameId, userId);
         String markedKey = RedisKeys.playerMarkedNumbersKey(gameId, userId, cardId);
 
@@ -312,12 +343,12 @@ public class PlayerStateService {
     /**
      * Check if player exists in the game.
      */
-    public Mono<Boolean> playerExists(Long gameId, Long userId) {
+    public Mono<Boolean> playerExists(Long gameId, String userId) {
         String cardsKey = RedisKeys.playerCardsKey(gameId, userId);
         return redis.hasKey(cardsKey);
     }
 
-    public Mono<Set<Integer>> addMarkedNumber(Long gameId, Long userId, String cardId, Integer number) {
+    public Mono<Set<Integer>> addMarkedNumber(Long gameId, String userId, String cardId, Integer number) {
         String markedKey = RedisKeys.playerMarkedNumbersKey(gameId, userId, cardId);
         return setOps.add(markedKey, String.valueOf(number))
                 .then(redis.expire(markedKey, PLAYER_STATE_TTL))
@@ -327,7 +358,7 @@ public class PlayerStateService {
                 );
     }
 
-    public Mono<Set<Integer>> removeMarkedNumber(Long gameId, Long userId, String cardId, Integer number) {
+    public Mono<Set<Integer>> removeMarkedNumber(Long gameId, String userId, String cardId, Integer number) {
         String markedKey = RedisKeys.playerMarkedNumbersKey(gameId, userId, cardId);
         return setOps.remove(markedKey, String.valueOf(number))
                 .then(setOps.members(markedKey)

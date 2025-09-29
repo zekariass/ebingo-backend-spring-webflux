@@ -2,6 +2,8 @@ package com.ebingo.backend.game.service.state;
 
 import com.ebingo.backend.game.dto.CardInfo;
 import com.ebingo.backend.game.enums.GameStatus;
+import com.ebingo.backend.game.mappers.GameMapper;
+import com.ebingo.backend.game.repository.GameRepository;
 import com.ebingo.backend.game.service.CardPoolService;
 import com.ebingo.backend.game.service.RedisPublisher;
 import com.ebingo.backend.game.state.GameState;
@@ -18,11 +20,11 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -38,6 +40,7 @@ public class GameStateService {
     private final PlayerStateService playerStateService; // Add this dependency
     private final RedissonReactiveClient redissonReactiveClient;
     private final RedisPublisher publisher;
+    private final GameRepository repository;
 //    private final RoomStateService roomStateService;
 
     private static final Duration GAME_STATE_TTL = Duration.ofHours(24);
@@ -45,27 +48,48 @@ public class GameStateService {
     // ----------------------------
     // Initialize Game
     // ----------------------------
-    public Mono<GameState> getOrInitializeGame(Long roomId, Long userId, int capacity) {
+    public Mono<GameState> getOrInitializeGame(Long roomId, String userId, int capacity) {
         String gameKey = RedisKeys.gameStateKey(roomId);
 
         return redis.hasKey(gameKey)
                 .flatMap(exists -> {
                     if (exists) {
                         log.info("================================>>>> Game already exists for room: {}", roomId);
-                        return getGameState(roomId);
+                        return getGameState(roomId)
+                                .flatMap(gameState -> playerStateService.getPlayerCardIds(gameState.getGameId(), userId)
+                                        .flatMap(uc -> {
+//                                            log.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>: USER CARDS: {}", uc);
+                                            gameState.setUserSelectedCardsIds(uc);
+
+                                            return Mono.just(gameState);
+                                        }));
                     } else {
-                        log.info("================================>>>> Game does not exist for room: {}", roomId);
+                        log.info("================================>>>> Game does not exist for room: {} and capacity {}", roomId, capacity);
+//                        log.info("============GameStateService========================>>> CAPACITY RECEIVED {}", capacity);
                         return initializeGameWithLock(roomId, userId, capacity);
                     }
                 });
     }
 
-    public Mono<GameState> initializeGameWithLock(Long roomId, Long userId, int capacity) {
-        return initializeGameWithLockWithRetry(roomId, userId, capacity, 0);
+    public Mono<GameState> initializeGameWithLock(Long roomId, String userId, int capacity) {
+        return initializeGameWithLockWithRetry(roomId, userId, capacity, 0)
+                .flatMap(gs -> {
+                    return cardPoolService.getAllCardIds(roomId)
+                            .flatMap(ids -> {
+                                gs.setAllCardIds(ids);
+                                return Mono.just(gs);
+
+                            }).flatMap(gameState -> playerStateService.getPlayerCardIds(gameState.getGameId(), userId)
+                                    .map(cards -> {
+                                        gameState.setUserSelectedCardsIds(cards);
+                                        return gameState;
+                                    }));
+                });
+
     }
 
-    private Mono<GameState> initializeGameWithLockWithRetry(Long roomId, Long userId, int capacity, int retryCount) {
-        log.info("================================>>>> Attempting to initialize game for room: {}", roomId);
+    private Mono<GameState> initializeGameWithLockWithRetry(Long roomId, String userId, int capacity, int retryCount) {
+//        log.info("============GameStateService3========================>>> CAPACITY RECEIVED {}", capacity);
         final int MAX_RETRIES = 3;
 
         if (retryCount >= MAX_RETRIES) {
@@ -85,7 +109,7 @@ public class GameStateService {
         return lock.tryLock(0, 10, TimeUnit.SECONDS) // don't wait, lease 10s
                 .flatMap(isLocked -> {
                     if (Boolean.TRUE.equals(isLocked)) {
-                        log.info("=================================>>> Instance acquired game initialization lock for room: {}", roomId);
+                        //log.info("=================================>>> Instance acquired game initialization lock for room: {}", roomId);
                         return Mono.usingWhen(
                                 Mono.just(lock),
                                 l -> initializeGame(roomId, capacity)
@@ -134,7 +158,8 @@ public class GameStateService {
 
 
     public Mono<GameState> initializeGame(Long roomId, Integer capacity) {
-        log.info("================================>>>> Creating game for room: {}", roomId);
+        log.info("============GameStateService4========================>>> CAPACITY RECEIVED {}", capacity);
+
         // 1. Initialize GameState object
         GameState gameState = new GameState();
         gameState.setRoomId(roomId);
@@ -160,13 +185,21 @@ public class GameStateService {
 
     // Placeholder for actual DB save logic
     private Mono<GameState> saveGameStateToDb(GameState gameState) {
-        // Simulate DB save and ID generation
-        return Mono.just(gameState)
-                .map(gs -> {
-                    gs.setGameId(ThreadLocalRandom.current().nextLong(1, 10001)); // Simulate setting a generated ID
-                    return gs;
+
+        return Mono.fromCallable(() -> GameMapper.toEntity(gameState))
+                .flatMap(gs -> {
+                    log.info("====================================================>>>::: GAME: {}", gs);
+                    gs.setStartedAt(LocalDateTime.now());
+                    return repository.save(gs);
+                })
+                .map(savedGame -> {
+                    // Create a new GameState instead of mutating
+//                    GameState updated = new GameState(gameState);
+                    gameState.setGameId(savedGame.getId());
+                    return gameState;
                 });
     }
+
 
     public Mono<Boolean> saveGameStateToRedis(GameState gameState, Long roomId) {
         String gameKey = RedisKeys.gameStateKey(roomId);
@@ -247,20 +280,11 @@ public class GameStateService {
                 });
     }
 
-    public Mono<PlayerState> getPlayerState(Long gameId, Long userId) {
+    public Mono<PlayerState> getPlayerState(Long gameId, String userId) {
         // Delegate to PlayerStateService
         return playerStateService.getPlayerState(gameId, userId);
     }
 
-//    public Mono<ConcurrentMap<Long, PlayerState>> getAllPlayers(Long gameId) {
-//        String playersKey = RedisKeys.gamePlayersKey(gameId);
-//        return setOps.members(playersKey)
-//                .map(obj -> Long.valueOf((String) obj))
-//                .flatMap(userId -> playerStateService.getPlayerState(gameId, userId) // Use PlayerStateService
-//                        .map(ps -> Map.entry(userId, ps)))
-//                .collect(Collectors.toConcurrentMap(Map.Entry::getKey, Map.Entry::getValue))
-//                .onErrorResume(e -> Mono.just(new ConcurrentHashMap<>()));
-//    }
 
     // ----------------------------
     // Disqualified Players
@@ -294,10 +318,10 @@ public class GameStateService {
     }
 
 
-    public Mono<Set<Long>> getDisqualifiedPlayers(Long gameId) {
+    public Mono<Set<String>> getDisqualifiedPlayers(Long gameId) {
         String disqualifiedKey = RedisKeys.gameDisqualifiedKey(gameId);
         return setOps.members(disqualifiedKey)
-                .map(obj -> Long.valueOf((String) obj))
+                .map(obj -> String.valueOf((String) obj))
                 .collect(Collectors.toSet())
                 .onErrorResume(e -> Mono.just(Set.of()));
     }
@@ -316,61 +340,25 @@ public class GameStateService {
     }
 
 
-//    public Mono<GameState> getGameState(Long roomId) {
-//        String gameKey = RedisKeys.gameStateKey(roomId);
-//
-//        return hashOps.entries(gameKey)
-//                .collectMap(Map.Entry::getKey, Map.Entry::getValue)
-//                .flatMap(gameMeta -> {
-//                    if (gameMeta.isEmpty()) {
-//                        return Mono.empty();
-//                    }
-//
-//                    GameState state = new GameState();
-//                    state.setGameId(Long.valueOf(gameMeta.get("gameId").toString()));
-//                    state.setRoomId(Long.valueOf(gameMeta.get("roomId").toString()));
-//                    state.setStatus(GameStatus.valueOf(gameMeta.get("status").toString()));
-//                    state.setStarted(Boolean.parseBoolean(gameMeta.get("started").toString()));
-//                    state.setEnded(Boolean.parseBoolean(gameMeta.get("ended").toString()));
-//                    state.getStopNumberDrawing().set(Boolean.parseBoolean(gameMeta.get("stopNumberDrawing").toString()));
-//
-//
-//                    Mono<LinkedHashSet<Integer>> drawnNumbers = getDrawnNumbers(state.getGameId());
-//                    Mono<Set<Long>> players = getAllPlayers(state.getGameId());
-//                    Mono<Set<Long>> disqualified = getDisqualifiedPlayers(state.getGameId());
-//                    Mono<List<CardInfo>> currentCardPool = cardPoolService.getCurrentPool(roomId).defaultIfEmpty(List.of()); // Placeholder if no capacity provided
-//                    Mono<List<CardInfo>> nextCardPool = cardPoolService.getNextPool(roomId); // Placeholder if no capacity provided
-//
-//
-//                    return Mono.zip(drawnNumbers, players, disqualified, currentCardPool, nextCardPool)
-//                            .map(tuple -> {
-//                                state.setDrawnNumber(tuple.getT1());
-//                                state.setJoinedPlayers(tuple.getT2());
-//                                state.setDisqualifiedPlayers(tuple.getT3());
-//                                state.setCurrentCardPool(tuple.getT4());
-//                                state.setNextCardPool(tuple.getT5());
-//
-//                                return state;
-//                            });
-//                })
-//                .onErrorResume(e -> {
-//                    log.error("Failed to get game state for room {}: {}", roomId, e.getMessage(), e);
-//                    return Mono.empty();
-//                });
-//    }
-
     public Mono<GameState> getGameState(Long roomId) {
         String gameKey = RedisKeys.gameStateKey(roomId);
 
         return hashOps.entries(gameKey)
                 .collectMap(Map.Entry::getKey, Map.Entry::getValue)
                 .flatMap(gameMeta -> {
+                    log.info("=======================================>>>> GAME META: {}", gameMeta);
                     if (gameMeta.isEmpty()) {
-                        log.info("================================>>>> GAME IS EMPTY: {}", roomId);
                         return Mono.empty();
                     }
 
                     GameState state = new GameState();
+
+                    Object gameIdObj = gameMeta.get("gameId");
+
+                    if (gameIdObj == null || "null".equals(gameIdObj.toString())) {
+                        return Mono.empty();
+                    }
+
                     state.setGameId(Long.valueOf(gameMeta.get("gameId").toString()));
                     state.setRoomId(Long.valueOf(gameMeta.get("roomId").toString()));
                     state.setStatus(GameStatus.valueOf(gameMeta.get("status").toString()));
@@ -380,22 +368,38 @@ public class GameStateService {
 
                     // Fetch all reactive parts
                     Mono<LinkedHashSet<Integer>> drawnNumbers = getDrawnNumbers(state.getGameId());
-                    Mono<Set<Long>> players = getAllPlayers(state.getGameId());
-                    Mono<Set<Long>> disqualified = getDisqualifiedPlayers(state.getGameId());
+                    Mono<Set<String>> players = getAllPlayers(state.getGameId());
+                    Mono<Set<String>> disqualified = getDisqualifiedPlayers(state.getGameId());
                     Mono<List<CardInfo>> currentCardPool = cardPoolService.getCurrentPool(roomId)
                             .defaultIfEmpty(List.of());
-//                    Mono<List<CardInfo>> nextCardPool = cardPoolService.getNextPool(roomId)
-//                            .defaultIfEmpty(List.of());
+                    Mono<Set<String>> allCardIds = cardPoolService.getAllCardIds(roomId)
+                            .defaultIfEmpty(Set.of());
 
                     // Zip everything and apply reactive setters
-                    return Mono.zip(drawnNumbers, players, disqualified, currentCardPool)
+                    return Mono.zip(drawnNumbers, players, disqualified, currentCardPool, allCardIds)
                             .flatMap(tuple ->
                                             state.setCurrentCardPool(tuple.getT4())
 //                                            .then(state.setNextCardPool(tuple.getT5()))
                                                     .then(Mono.fromCallable(() -> {
-                                                        state.setDrawnNumber(tuple.getT1());
-                                                        state.setJoinedPlayers(tuple.getT2());
-                                                        state.setDisqualifiedPlayers(tuple.getT3());
+
+
+                                                        if (state.getDrawnNumbers().isEmpty()) {
+                                                            state.setDrawnNumber(tuple.getT1());
+                                                        }
+
+                                                        if (state.getJoinedPlayers().isEmpty()) {
+                                                            state.setJoinedPlayers(tuple.getT2());
+                                                        }
+
+                                                        if (state.getDisqualifiedUsers().isEmpty()) {
+                                                            state.setDisqualifiedPlayers(tuple.getT3());
+                                                        }
+
+                                                        if (state.getAllCardIds().isEmpty()) {
+                                                            state.setAllCardIds(tuple.getT5());
+                                                        }
+
+//                                                        state.setUserSelectedCardsIds(tuple.getT6());
                                                         return state;
                                                     }))
                             );
@@ -411,20 +415,22 @@ public class GameStateService {
     // Delete GameState
     // ----------------------------
     public Mono<Boolean> deleteGameState(Long roomId) {
-        String gameKey = RedisKeys.gameStateKey(roomId);
-
         return getGameState(roomId)
                 .flatMap(state -> {
                     Long gameId = state.getGameId();
                     return redis.delete(
-                            RedisKeys.gameStateKey(roomId),
-                            RedisKeys.gameDrawnNumbersKey(gameId),
-                            RedisKeys.gamePlayersKey(gameId),
-                            RedisKeys.gameDisqualifiedKey(gameId),
-                            RedisKeys.currentCardPoolKey(gameId)
-                    ).map(count -> count > 0);
+                                    RedisKeys.gameStateKey(roomId),
+                                    RedisKeys.gameDrawnNumbersKey(gameId),
+                                    RedisKeys.gamePlayersKey(gameId),
+                                    RedisKeys.gameDisqualifiedKey(gameId),
+                                    RedisKeys.currentCardPoolKey(gameId),
+                                    RedisKeys.roomCardsSetKey(roomId)
+                            )
+                            .map(count -> count > 0)
+                            .onErrorReturn(false);
                 })
-                .onErrorResume(e -> Mono.just(false));
+                .defaultIfEmpty(false) // ensures that if getGameState is empty, Mono emits false
+                .doOnSuccess(deleted -> log.info("Deleted game state for roomId={} -> {}", roomId, deleted));
     }
 
 
@@ -484,10 +490,10 @@ public class GameStateService {
     }
 
 
-    public Mono<Set<Long>> getAllPlayers(Long gameId) {
+    public Mono<Set<String>> getAllPlayers(Long gameId) {
         String playersKey = RedisKeys.gamePlayersKey(gameId);
         return setOps.members(playersKey)
-                .map(obj -> Long.valueOf(obj.toString()))  // safer conversion
+                .map(obj -> String.valueOf(obj.toString()))  // safer conversion
                 .collect(Collectors.toSet())
                 .onErrorResume(e -> {
                     log.warn("Failed to fetch players for game {}: {}", gameId, e.getMessage());

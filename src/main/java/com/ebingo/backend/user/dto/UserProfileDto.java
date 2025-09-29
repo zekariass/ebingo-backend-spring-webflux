@@ -1,6 +1,5 @@
 package com.ebingo.backend.user.dto;
 
-import com.ebingo.backend.payment.dto.WalletDto;
 import com.ebingo.backend.user.enums.UserRole;
 import com.ebingo.backend.user.enums.UserStatus;
 import lombok.*;
@@ -27,7 +26,6 @@ public class UserProfileDto {
     private UserStatus status;
     private UserRole role;
     private Integer dailyFreePlayCount;
-    private WalletDto wallet;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

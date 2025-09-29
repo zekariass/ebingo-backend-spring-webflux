@@ -3,7 +3,9 @@ package com.ebingo.backend.game.state;
 import com.ebingo.backend.game.dto.CardInfo;
 import lombok.Data;
 
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -13,12 +15,16 @@ import java.util.concurrent.ConcurrentHashMap;
 @Data
 public class PlayerState {
 
-    private Long userProfileId;
+    // User supabase Id
+    private String userProfileId;
 
     // cardId -> BingoCard
     private Map<String, CardInfo> cards = new ConcurrentHashMap<>();
 
-    public PlayerState(Long userProfileId) {
+    // To maintain the order of selection, we use LinkedHashSet
+    private Set<String> userSelectedCardsIds = new LinkedHashSet<>();
+
+    public PlayerState(String userProfileId) {
         this.userProfileId = userProfileId;
     }
 }

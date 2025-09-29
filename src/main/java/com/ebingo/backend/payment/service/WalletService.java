@@ -8,4 +8,6 @@ public interface WalletService {
     Mono<WalletDto> createWallet(UserProfile userProfile);
 
     Mono<WalletDto> getWalletByUserProfileId(Long userProfileId);
+
+    Mono<WalletDto> getWalletBySupabaseId(String userSupabaseId);
 }

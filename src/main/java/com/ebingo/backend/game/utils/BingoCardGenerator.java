@@ -18,6 +18,7 @@ public class BingoCardGenerator {
      * @return List of Bingo cards, each represented as a Map<Column, List<Integer>>
      */
     public static List<Map<BingoColumn, List<Integer>>> generateCardPool(int poolSize) {
+        System.out.println("============BingoCardGenerator========================>>> CAPACITY RECEIVED" + poolSize);
         List<Map<BingoColumn, List<Integer>>> pool = new ArrayList<>(poolSize);
 
         for (int i = 0; i < poolSize; i++) {

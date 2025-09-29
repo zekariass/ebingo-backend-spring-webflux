@@ -1,7 +1,6 @@
 package com.ebingo.backend.user.mappers;
 
 
-import com.ebingo.backend.payment.dto.WalletDto;
 import com.ebingo.backend.user.dto.UserProfileCreateDto;
 import com.ebingo.backend.user.dto.UserProfileDto;
 import com.ebingo.backend.user.dto.UserProfileUpdateDto;
@@ -30,7 +29,7 @@ public final class UserProfileMapper {
 //                .build();
 //    }
 
-    public static UserProfileDto toDto(UserProfile userProfile, WalletDto walletDto) {
+    public static UserProfileDto toDto(UserProfile userProfile) {
         if (userProfile == null) return null;
         return UserProfileDto.builder()
                 .id(userProfile.getId())
@@ -44,7 +43,6 @@ public final class UserProfileMapper {
                 .status(userProfile.getStatus())
                 .role(userProfile.getRole())
                 .dailyFreePlayCount(userProfile.getDailyFreePlayCount())
-                .wallet(walletDto)
                 .createdAt(userProfile.getCreatedAt())
                 .updatedAt(userProfile.getUpdatedAt())
                 .build();

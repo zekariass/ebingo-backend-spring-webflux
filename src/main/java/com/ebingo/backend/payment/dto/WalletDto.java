@@ -3,7 +3,6 @@ package com.ebingo.backend.payment.dto;
 import lombok.*;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 
 @Setter
 @Getter
@@ -39,8 +38,4 @@ public class WalletDto {
     private BigDecimal totalAvailableBalance;
 
     private BigDecimal availableToWithdraw;
-
-    private Instant createdAt;
-
-    private Instant updatedAt;
 }

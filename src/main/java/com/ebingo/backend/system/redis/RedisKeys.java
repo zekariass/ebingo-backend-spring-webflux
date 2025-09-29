@@ -10,6 +10,7 @@ public final class RedisKeys {
 //    }
 
     public static String roomCardKey(Long roomId, String cardId) {
+        cardId = cardId.replace('-', '_');
         return "room:" + roomId + ":card:" + cardId;
     }
 
@@ -18,10 +19,12 @@ public final class RedisKeys {
     }
 
     public static String roomCardsSetKey(Long roomId) {
+//        System.out.println("==================================>>> ROOM ID: " + roomId);
         return "room:" + roomId + ":cards";
     }
 
-    public static String userOwnedCardsKey(Long gameId, Long userId) {
+    public static String userOwnedCardsKey(Long gameId, String userId) {
+        userId = userId.replace('-', '_');
         return "game:" + gameId + ":owner:" + userId + ":cards";
     }
 
@@ -33,16 +36,19 @@ public final class RedisKeys {
         return "game:" + gameId + ":channel";
     }
 
-    public static String userChannel(Long userId) {
+    public static String userChannel(String userId) {
+        userId = userId.replace('-', '_');
         return "user:" + userId + ":channel";
     }
 
 
-    public static String userLockKey(Long gameId, Long userId) {
+    public static String userLockKey(Long gameId, String userId) {
+        userId = userId.replace('-', '_');
         return "game:" + gameId + ":user:" + userId + ":lock";
     }
 
     public static String cardLockKey(Long gameId, String cardId) {
+        cardId = cardId.replace('-', '_');
         return "game:" + gameId + ":card:" + cardId + ":claim:lock";
     }
 
@@ -72,12 +78,19 @@ public final class RedisKeys {
 
     // PLAYER STATE (per game)
 
-    public static String playerCardsKey(Long gameId, Long userId) {
+    public static String playerCardsKey(Long gameId, String userId) {
+        userId = userId.replace('-', '_');
         return "game:" + gameId + ":player:" + userId + ":cards";
     }
 
-    public static String playerMarkedNumbersKey(Long gameId, Long userId, String cardId) {
-        cardId = cardId.replace("-", "_");
+    public static String playerCardsIdsKey(Long gameId, String userId) {
+        userId = userId.replace('-', '_');
+        return "game:" + gameId + ":player:" + userId + ":cardsIds";
+    }
+
+    public static String playerMarkedNumbersKey(Long gameId, String userId, String cardId) {
+        cardId = cardId.replace('-', '_');
+        userId = userId.replace('-', '_');
         return "game:" + gameId + ":player:" + userId + ":card:" + cardId + ":marked";
     }
 

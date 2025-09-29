@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
 
 public enum GameStatus {
     READY,
+    COUNTDOWN,
     PLAYING,
     COMPLETED,
     CANCELLED_ADMIN,

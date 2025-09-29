@@ -6,6 +6,7 @@ import com.ebingo.backend.game.dto.RoomUpdateDto;
 import com.ebingo.backend.game.entity.Room;
 import com.ebingo.backend.game.mappers.RoomMapper;
 import com.ebingo.backend.game.repository.RoomRepository;
+import com.ebingo.backend.game.service.state.GameStateService;
 import com.ebingo.backend.system.exceptions.ResourceNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -20,10 +21,12 @@ public class RoomServiceImpl implements RoomService {
 
     private final RoomRepository roomRepository;
     private final ReactiveTransactionManager transactionManager;
+    private final GameStateService gameStateService;
 
-    public RoomServiceImpl(RoomRepository roomRepository, ReactiveTransactionManager transactionManager) {
+    public RoomServiceImpl(RoomRepository roomRepository, ReactiveTransactionManager transactionManager, GameStateService gameStateService) {
         this.roomRepository = roomRepository;
         this.transactionManager = transactionManager;
+        this.gameStateService = gameStateService;
     }
 
     @Override
@@ -42,7 +45,7 @@ public class RoomServiceImpl implements RoomService {
 
     @Override
     public Mono<RoomDto> getRoomById(Long id) {
-        log.info("Getting room by id: {}", id);
+//        log.info("===============================>> Getting room by id: {}", id);
         return roomRepository.findById(id)
                 .onErrorMap(e -> new RuntimeException("Error getting room by id: " + id, e))
                 .map(RoomMapper::toDto);
@@ -74,8 +77,18 @@ public class RoomServiceImpl implements RoomService {
 
     @Override
     public Mono<Void> deleteRoomById(Long id) {
-        log.info("Deleting room by id: {}", id);
-        return roomRepository.deleteById(id)
-                .onErrorMap(e -> new RuntimeException("Error deleting room with id: " + id, e));
+
+        Mono<Void> deleteGameState = gameStateService.deleteGameState(id)
+                .doOnSuccess(deleted -> log.info("Deleted game state for roomId={} -> {}", id, deleted))
+                .doOnError(e -> log.error("Error deleting game state for roomId={}", id, e))
+                .then(); // convert Mono<Boolean> to Mono<Void>
+
+        Mono<Void> deleteRoom = roomRepository.deleteById(id)
+                .doOnSuccess(v -> log.info("Deleted room with id={}", id))
+                .doOnError(e -> log.error("Error deleting room with id={}", id, e));
+
+        // Run both in parallel and wait for both to complete
+        return Mono.when(deleteRoom, deleteGameState);
     }
+
 }

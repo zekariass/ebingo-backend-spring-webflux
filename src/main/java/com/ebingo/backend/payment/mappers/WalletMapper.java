@@ -20,8 +20,6 @@ public final class WalletMapper {
                 .totalWithdrawal(wallet.getTotalWithdrawal())
                 .totalAvailableBalance(wallet.getTotalAvailableBalance())
                 .availableToWithdraw(wallet.getAvailableToWithdraw())
-                .createdAt(wallet.getCreatedAt())
-                .updatedAt(wallet.getUpdatedAt())
                 .build();
     }
 }

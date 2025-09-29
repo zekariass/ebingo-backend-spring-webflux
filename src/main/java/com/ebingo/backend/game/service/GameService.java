@@ -40,7 +40,7 @@ public class GameService {
     private final GameStateService gameStateService;
     private final PaymentService paymentService;
     private final RedissonReactiveClient redissonReactiveClient;
-    private final ReactiveSetOperations<String, Long> setOps;
+    private final ReactiveSetOperations<String, String> setOps;
 
     private final int drawInterval = 3; // seconds
     private final int minPlayersToStart = 2;
@@ -48,7 +48,7 @@ public class GameService {
     /**
      * Player joins game and optionally selects a card
      */
-//    public Mono<Void> playerJoin(Long roomId, Long gameId, Long userId, Integer capacity, BigDecimal entryFee) {
+//    public Mono<Void> playerJoin(Long roomId, Long gameId, String userId, Integer capacity, BigDecimal entryFee) {
 //        Mono<Boolean> refundPayment = paymentService.processRefund(userId, entryFee);
 //
 //        return paymentService.processPayment(userId, entryFee)   // 1️⃣ charge first
@@ -124,7 +124,7 @@ public class GameService {
 //    }
 
 
-//    public Mono<Void> playerJoin(Long roomId, Long gameId, Long userId, Integer capacity, BigDecimal entryFee) {
+//    public Mono<Void> playerJoin(Long roomId, Long gameId, String userId, Integer capacity, BigDecimal entryFee) {
 //        AtomicBoolean paymentCompleted = new AtomicBoolean(false); // track explicitly
 //        Mono<Boolean> refundPayment = paymentService.processRefund(userId, entryFee);
 //
@@ -218,7 +218,7 @@ public class GameService {
 //                    return Mono.empty();
 //                });
 //    }
-    public Mono<Void> playerJoin(Long roomId, Long gameId, Long userId, Integer capacity, BigDecimal entryFee) {
+    public Mono<Void> playerJoin(Long roomId, Long gameId, String userId, Integer capacity, BigDecimal entryFee) {
         String playersKey = RedisKeys.gamePlayersKey(gameId);
         AtomicBoolean paymentCompleted = new AtomicBoolean(false);
 
@@ -272,7 +272,7 @@ public class GameService {
     /**
      * Send state to a player who is already joined.
      */
-    private Mono<Void> sendExistingPlayerState(Long gameId, Long userId) {
+    private Mono<Void> sendExistingPlayerState(Long gameId, String userId) {
         return playerStateService.getPlayerState(gameId, userId)
                 .flatMap(playerState ->
                         publisher.publishUserEvent(userId,
@@ -291,21 +291,22 @@ public class GameService {
     /**
      * Steps to perform after a successful payment and join.
      */
-    private Mono<Void> afterSuccessfulJoin(Long roomId, Long gameId, Long userId, Integer capacity) {
+    private Mono<Void> afterSuccessfulJoin(Long roomId, Long gameId, String userId, Integer capacity) {
         log.info("================================>>>>>: afterSuccessfulJoin for user {} in game {}", userId, gameId);
         return gameStateService.getGameState(roomId)
                 .flatMap(state -> {
                     log.info("=====================================>>>: GAME STATE: {}", state);
-                    Set<Long> playerIds = state.getJoinedPlayers();
+                    Set<String> playerIds = state.getJoinedPlayers();
                     int playersCount = playerIds.size();
 
                     // Broadcast to room
                     Mono<Long> broadcastPlayers = publisher.publishEvent(
                             RedisKeys.roomChannel(roomId),
                             Map.of(
-                                    "type", "playerJoined",
+                                    "type", "game.playerJoined",
                                     "payload", Map.of(
                                             "joinedPlayers", playerIds,
+                                            "playerId", userId,
                                             "playersCount", playersCount
                                     )
                             )
@@ -341,7 +342,7 @@ public class GameService {
     }
 
 
-    public Mono<Void> leaveGame(Long roomId, Long gameId, Long userId, BigDecimal entryFee) {
+    public Mono<Void> leaveGame(Long roomId, Long gameId, String userId, BigDecimal entryFee) {
 
 
         return gameStateService.getGameState(roomId)
@@ -420,7 +421,7 @@ public class GameService {
                                 // Broadcast updated players
                                 Mono<Long> broadcastPlayers = gameStateService.getGameState(roomId)
                                         .flatMap(updatedState -> {
-                                            Set<Long> players = updatedState.getJoinedPlayers();
+                                            Set<String> players = updatedState.getJoinedPlayers();
                                             int playersCount = players.size();
 
                                             return publisher.publishEvent(
@@ -629,7 +630,7 @@ public class GameService {
      */
 //    public Mono<Void> claimBingo(Long roomId,
 //                                 Long gameId,
-//                                 Long userId,
+//                                 String userId,
 //                                 String username, Map<String, Object> payload) {
 //
 //        String cardId = (String) payload.get("cardId");
@@ -769,7 +770,7 @@ public class GameService {
 //    }
     public Mono<Void> claimBingo(Long roomId,
                                  Long gameId,
-                                 Long userId,
+                                 String userId,
                                  String username,
                                  Map<String, Object> payload) {
 
@@ -833,7 +834,7 @@ public class GameService {
                                     playerStateService.getPlayerCards(gameId, userId)
                             )
                             .flatMap(tuple -> {
-                                Set<Long> players = tuple.getT1();
+                                Set<String> players = tuple.getT1();
                                 Map<String, CardInfo> playerCards = tuple.getT2();
 
                                 // Validate player membership
@@ -986,15 +987,15 @@ public class GameService {
     }
 
 
-    public Mono<GameState> getOrInitializeGame(Long roomId, Long userId, Integer capacity) {
+    public Mono<GameState> getOrInitializeGame(Long roomId, String userId, Integer capacity) {
         return gameStateService.getOrInitializeGame(roomId, userId, capacity)
                 .map(gs -> {
-                    log.info("Got or initialized game state: {}", gs.getCurrentCardPool());
+                    log.info("========================CARD POOL============>> CARD POOP SIZE: {}", gs);
                     return gs;
                 });
     }
 
-    public Mono<Void> markNumber(Long roomId, Long gameId, Long userId, Map<String, Object> payload) {
+    public Mono<Void> markNumber(Long roomId, Long gameId, String userId, Map<String, Object> payload) {
         String cardId = (String) payload.get("cardId");
         Integer number = (Integer) payload.get("number");
         if (cardId == null || cardId.isBlank() || !payload.containsKey("number") || number == null || number < 1 || number > 75) {
@@ -1017,7 +1018,7 @@ public class GameService {
                 .then();
     }
 
-    public Mono<Void> unmarkNumber(Long roomId, Long gameId, Long userId, Map<String, Object> payload) {
+    public Mono<Void> unmarkNumber(Long roomId, Long gameId, String userId, Map<String, Object> payload) {
         String cardId = (String) payload.get("cardId");
         Integer number = (Integer) payload.get("number");
         if (cardId == null || cardId.isBlank() || !payload.containsKey("number") || number == null || number < 1 || number > 75) {
