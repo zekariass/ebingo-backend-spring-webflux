@@ -8,5 +8,5 @@ public interface PaymentService {
 
     Mono<Boolean> processPayment(String userId, BigDecimal amount);
 
-    Mono<Boolean> processRefund(String userId, BigDecimal amount);
+    Mono<Boolean> processRefund(String userId, Long gameId);
 }

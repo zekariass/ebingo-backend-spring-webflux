@@ -26,7 +26,7 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     @Override
-    public Mono<Boolean> processRefund(String userId, BigDecimal amount) {
+    public Mono<Boolean> processRefund(String userId, Long gameId) {
         return Mono.just(true); // Placeholder implementation
     }
 }

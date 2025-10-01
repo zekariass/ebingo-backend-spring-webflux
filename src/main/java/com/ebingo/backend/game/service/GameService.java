@@ -43,7 +43,7 @@ public class GameService {
     private final ReactiveSetOperations<String, String> setOps;
 
     private final int drawInterval = 3; // seconds
-    private final int minPlayersToStart = 2;
+    private final int minPlayersToStart = 1;
 
     /**
      * Player joins game and optionally selects a card
@@ -227,7 +227,8 @@ public class GameService {
                     if (added == 0) {
                         // Already joined → just send existing state
                         log.info("User {} is already joined in game {}", userId, gameId);
-                        return sendExistingPlayerState(gameId, userId);
+//                        return sendExistingPlayerState(gameId, userId);
+                        return afterSuccessfulJoin(roomId, gameId, userId, capacity);
                     }
 
                     // New join → attempt payment
@@ -257,7 +258,7 @@ public class GameService {
                                 // Rollback membership on unexpected errors after payment
                                 log.error("Join failed for user {}: {}", userId, error.getMessage(), error);
                                 if (paymentCompleted.get()) {
-                                    return paymentService.processRefund(userId, entryFee)
+                                    return paymentService.processRefund(userId, gameId)
                                             .doOnSuccess(refunded ->
                                                     log.warn("Refund {} for user {} after failure",
                                                             refunded ? "succeeded" : "failed", userId))
@@ -313,42 +314,43 @@ public class GameService {
                     );
 
                     // Send state to user
-                    Mono<Void> sendPlayerState = playerStateService.getPlayerState(gameId, userId)
-                            .flatMap(playerState ->
-                                    publisher.publishUserEvent(userId,
-                                            Map.of(
-                                                    "type", "playerState",
-                                                    "payload", Map.of(
-                                                            "userId", userId,
-                                                            "state", playerState
-                                                    )
-                                            )
-                                    )
-                            )
-                            .then();
+//                    Mono<Void> sendPlayerState = playerStateService.getPlayerState(gameId, userId)
+//                            .flatMap(playerState ->
+//                                    publisher.publishUserEvent(userId,
+//                                            Map.of(
+//                                                    "type", "playerState",
+//                                                    "payload", Map.of(
+//                                                            "userId", userId,
+//                                                            "state", playerState
+//                                                    )
+//                                            )
+//                                    )
+//                            )
+//                            .then();
 
                     // Maybe start countdown
                     Mono<Void> maybeStartCountdown = Mono.defer(() -> {
                         if (playersCount >= minPlayersToStart
                                 && !state.isStarted()
                                 && state.getStatus().equals(GameStatus.READY)) {
-                            return startCountdownByGameId(roomId, gameId, capacity, 10);
+                            return startCountdownByGameId(roomId, gameId, userId, capacity, 20);
                         }
                         return Mono.empty();
                     });
 
-                    return Mono.when(broadcastPlayers, sendPlayerState).then(maybeStartCountdown);
+//                    return Mono.when(broadcastPlayers, sendPlayerState).then(maybeStartCountdown);
+                    return Mono.when(broadcastPlayers).then(maybeStartCountdown);
                 });
     }
 
 
-    public Mono<Void> leaveGame(Long roomId, Long gameId, String userId, BigDecimal entryFee) {
+    public Mono<Void> leaveGame(Long roomId, Long gameId, String userId) {
 
 
         return gameStateService.getGameState(roomId)
                 .flatMap(state -> {
 
-                    log.info("=====================================>>>: GAME: {}", state);
+//                    log.info("=====================================>>>: GAME: {}", state);
                     if (state == null) {
                         return publisher.publishUserEvent(userId,
                                 Map.of(
@@ -371,7 +373,7 @@ public class GameService {
                         log.info("User {} tried to cancel, but game {} already started", userId, gameId);
                         return publisher.publishUserEvent(userId,
                                 Map.of(
-                                        "type", "gameLeft",
+                                        "type", "game.playerLeft",
                                         "payload", Map.of(
                                                 "message", "Game already started.",
                                                 "userId", userId,
@@ -402,19 +404,19 @@ public class GameService {
                                 log.info("User {} successfully removed from game {}", userId, gameId);
 
                                 // Refund payment
-                                Mono<Boolean> refund = paymentService.processRefund(userId, entryFee)
+                                Mono<Boolean> refund = paymentService.processRefund(userId, gameId)
                                         .doOnNext(refunded -> log.info("Refund {} for user {} in game {}",
                                                 refunded ? "succeeded" : "failed", userId, gameId));
 
                                 // Personal acknowledgement
                                 Mono<Void> personalAck = publisher.publishUserEvent(userId,
                                         Map.of(
-                                                "type", "gameLeft",
+                                                "type", "game.playerLeft",
                                                 "payload", Map.of(
                                                         "userId", userId,
                                                         "gameId", gameId,
                                                         "success", true,
-                                                        "message", "You have been removed and refunded."
+                                                        "message", "You have left the game and refunded."
                                                 )
                                         )).then();
 
@@ -461,34 +463,84 @@ public class GameService {
     /**
      * Start countdown for a game
      */
-    public Mono<Void> startCountdownByGameId(Long roomId, Long gameId, Integer capacity, int countdownSeconds) {
+//    public Mono<Void> startCountdownByGameId(Long roomId, Long gameId, Integer capacity, int countdownSeconds) {
+//
+//        // Publish countdown start event
+//        Mono<Long> countdownEvent = publisher.publishEvent(
+//                RedisKeys.roomChannel(roomId),
+//                Map.of(
+//                        "type", "game.countdown",
+//                        "payload", Map.of(
+//                                "roomId", roomId,
+//                                "gameId", gameId,
+//                                "seconds", countdownSeconds
+//                        )
+//                )
+//        );
+//
+//        // Start countdown sequence after publishing the event
+//        return countdownEvent
+//                .thenMany(Flux.range(0, countdownSeconds)
+//                        .delayElements(Duration.ofSeconds(1))
+//                        .doOnNext(sec -> log.debug("==============================>>>> Countdown {} / {}", sec + 1, countdownSeconds))
+//                )
+//                .then(Mono.defer(() -> startGame(gameId, roomId, capacity))); // Start game after countdown
+//    }
+    public Mono<Void> startCountdownByGameId(Long roomId, Long gameId, String userId, Integer capacity, int countdownSeconds) {
 
-        // Publish countdown start event
+        // Publish countdown start event (only once)
         Mono<Long> countdownEvent = publisher.publishEvent(
                 RedisKeys.roomChannel(roomId),
                 Map.of(
-                        "type", "countdown",
+                        "type", "game.countdown",
                         "payload", Map.of(
                                 "roomId", roomId,
                                 "gameId", gameId,
-                                "duration", countdownSeconds
+                                "seconds", countdownSeconds
                         )
                 )
         );
 
-        // Start countdown sequence after publishing the event
+        // Start countdown sequence internally without broadcasting each tick
+//        return countdownEvent
+//                .thenMany(
+//                        Flux.range(0, countdownSeconds)
+//                                .delayElements(Duration.ofSeconds(1))
+//                                .doOnNext(sec -> log.debug("==============================>>>> Countdown {} / {}", sec + 1, countdownSeconds))
+//                )
+//                .then(Mono.defer(() -> startGame(gameId, roomId, capacity))); // Start game after countdown
+
+
+        // Run countdown internally, then conditionally start game
         return countdownEvent
-                .thenMany(Flux.range(0, countdownSeconds)
-                        .delayElements(Duration.ofSeconds(1))
-                        .doOnNext(sec -> log.debug("Countdown {} / {}", sec + 1, countdownSeconds))
+                .thenMany(
+                        Flux.range(0, countdownSeconds)
+                                .delayElements(Duration.ofSeconds(1))
+                                .doOnNext(sec -> log.debug("==============================>>>> Countdown {} / {}", sec + 1, countdownSeconds))
                 )
-                .then(Mono.defer(() -> startGame(gameId, roomId, capacity))); // Start game after countdown
+                .then(
+                        // After countdown, check player count again before starting
+                        Mono.defer(() ->
+                                gameStateService.getAllPlayers(gameId)
+                                        .flatMap(state -> {
+                                            int playersCount = state.size();
+                                            log.info("Countdown finished. Players: {} / min: {}", playersCount, minPlayersToStart);
+                                            if (playersCount >= minPlayersToStart) {
+                                                return startGame(gameId, roomId, userId, capacity);
+                                            } else {
+                                                log.warn("Not enough players after countdown. Game {} will not start.", gameId);
+                                                return Mono.empty();
+                                            }
+                                        })
+                        )
+                );
     }
+
 
     /**
      * Start the game
      */
-    private Mono<Void> startGame(Long gameId, Long roomId, Integer capacity) {
+    private Mono<Void> startGame(Long gameId, Long roomId, String userId, Integer capacity) {
         return gameStateService.getGameState(roomId)
                 .flatMap(state -> {
                     state.setStarted(true);
@@ -498,14 +550,14 @@ public class GameService {
                     // Save the updated state first
                     return gameStateService.saveGameStateToRedis(state, roomId)
                             .then(publisher.publishEvent(
-                                    RedisKeys.roomChannel(state.getRoomId()),
+                                    RedisKeys.roomChannel(roomId),
                                     Map.of(
-                                            "type", "gameStarted",
-                                            "payload", Map.of("hh", 1) // empty payload
+                                            "type", "game.started",
+                                            "payload", Map.of("message", "Game has started.") // empty payload
                                     )
                             ))
                             .then(
-                                    startNumberDrawingWithLock(state)
+                                    startNumberDrawingWithLock(state, userId)
                                             .onErrorResume(e -> {
                                                 log.error("Number drawing failed", e);
                                                 return Mono.empty();
@@ -517,7 +569,7 @@ public class GameService {
     /**
      * Start number drawing with distributed lock to ensure only one instance handles it
      */
-    private Mono<Void> startNumberDrawingWithLock(GameState state) {
+    private Mono<Void> startNumberDrawingWithLock(GameState state, String userId) {
         String lockKey = RedisKeys.gameDrawingLockKey(state.getGameId());
         RLockReactive lock = redissonReactiveClient.getLock(lockKey);
 
@@ -525,7 +577,7 @@ public class GameService {
                 .flatMap(isLocked -> {
                     if (Boolean.TRUE.equals(isLocked)) {
                         log.info("Instance acquired drawing lock for game {}", state.getGameId());
-                        return drawNumbersLoop(state)
+                        return drawNumbersLoop(state, userId)
                                 .then(lock.unlock()
                                         .doOnSuccess(v -> log.info("Released drawing lock for game {}", state.getGameId()))
                                         .onErrorResume(e -> {
@@ -544,7 +596,7 @@ public class GameService {
     /**
      * Draw numbers until a winner is found or all 75 numbers are called
      */
-    private Mono<Void> drawNumbersLoop(GameState state) {
+    private Mono<Void> drawNumbersLoop(GameState state, String userId) {
         return Mono.defer(() -> {
             // Get current state from Redis to ensure we have the latest
             return gameStateService.getGameState(state.getRoomId())
@@ -555,7 +607,7 @@ public class GameService {
                         }
 
                         List<Integer> remaining = new ArrayList<>();
-                        for (int i = 1; i <= 75; i++) {
+                        for (int i = 1; i <= 15; i++) {
                             if (!latestState.getDrawnNumbers().contains(i)) {
                                 remaining.add(i);
                             }
@@ -563,7 +615,7 @@ public class GameService {
 
                         if (remaining.isEmpty()) {
                             log.info("All numbers drawn for game {}", latestState.getGameId());
-                            return endGameNoWinner(latestState);
+                            return endGameNoWinner(latestState, userId);
                         }
 
                         Collections.shuffle(remaining);
@@ -575,7 +627,7 @@ public class GameService {
                                 .doFinally(signal -> {
                                     if (!latestState.isEnded() && !latestState.getStopNumberDrawing().get()) {
                                         log.info("All numbers drawn with no winner for game {}, ending game", latestState.getGameId());
-                                        endGameNoWinner(latestState).subscribe();
+                                        endGameNoWinner(latestState, userId).subscribe();
                                     } else {
                                         log.info("Number drawing stopped for game {} with signal {}", latestState.getGameId(), signal);
                                     }
@@ -591,7 +643,7 @@ public class GameService {
     private Mono<Void> drawSingleNumber(GameState state, Integer number) {
         return Mono.defer(() -> {
             if (state.isEnded() || state.getStopNumberDrawing().get()) {
-                log.info("===========================================>>> Game {} ended during drawing, stopping", state.getGameId());
+                log.info("=============================>>> Game {} ended during drawing, stopping", state.getGameId());
                 return Mono.empty(); // Stop if game ended
             }
 
@@ -601,8 +653,8 @@ public class GameService {
             // Save updated state to Redis
             return gameStateService.saveGameStateToRedis(state, state.getRoomId())
                     .then(publisher.publishEvent(
-                            RedisKeys.gameChannel(state.getGameId()),
-                            Map.of("type", "numberCalled",
+                            RedisKeys.roomChannel(state.getRoomId()),
+                            Map.of("type", "game.numberDrawn",
                                     "payload", Map.of("number", number))
                     ))
                     .then();
@@ -612,14 +664,23 @@ public class GameService {
     /**
      * End game when no winner is found (all numbers drawn)
      */
-    private Mono<Void> endGameNoWinner(GameState state) {
+    private Mono<Void> endGameNoWinner(GameState state, String userId) {
         state.setEnded(true);
         state.setStatus(GameStatus.COMPLETED);
 
         return gameStateService.saveGameStateToRedis(state, state.getRoomId())
                 .then(publisher.publishEvent(
-                        RedisKeys.gameChannel(state.getGameId()),
-                        Map.of("type", "gameEnded", "payload", Map.of("reason", "no_winner"))
+                        RedisKeys.roomChannel(state.getRoomId()),
+                        Map.of("type", "game.ended", "payload", Map.of(
+                                "gameId", state.getGameId(),
+                                "playerId", userId,
+                                "playerName", "No Winner",
+                                "cardId", "",
+                                "pattern", "",
+                                "prizeAmount", 0,
+                                "winAt", "",
+                                "hasWinner", false
+                        ))
                 ))
                 .then(gameStateService.deleteGameState(state.getRoomId()))
                 .then();
@@ -996,6 +1057,7 @@ public class GameService {
     }
 
     public Mono<Void> markNumber(Long roomId, Long gameId, String userId, Map<String, Object> payload) {
+        log.info("========================MARK NUMBER PAYLOAD============>> {}", payload);
         String cardId = (String) payload.get("cardId");
         Integer number = (Integer) payload.get("number");
         if (cardId == null || cardId.isBlank() || !payload.containsKey("number") || number == null || number < 1 || number > 75) {
@@ -1009,10 +1071,10 @@ public class GameService {
         }
         return playerStateService.addMarkedNumber(gameId, userId, cardId, number)
                 .flatMap(updatedCard -> publisher.publishUserEvent(userId, Map.of(
-                        "type", "numberMarked",
+                        "type", "card.markNumberResponse",
                         "payload", Map.of(
                                 "cardId", cardId,
-                                "markedNumbers", updatedCard
+                                "marked", updatedCard
                         )
                 )))
                 .then();
@@ -1032,10 +1094,10 @@ public class GameService {
         }
         return playerStateService.removeMarkedNumber(gameId, userId, cardId, number)
                 .flatMap(updatedCard -> publisher.publishUserEvent(userId, Map.of(
-                        "type", "numberUnmarked",
+                        "type", "card.unmarkNumberResponse",
                         "payload", Map.of(
                                 "cardId", cardId,
-                                "markedNumbers", updatedCard
+                                "marked", updatedCard
                         )
                 )))
                 .then();

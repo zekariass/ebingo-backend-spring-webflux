@@ -184,9 +184,10 @@ public class CardSelectionService {
                                                     .doOnSuccess(v -> log.info("User {} successfully claimed card {} in room {}", userId, cardId, roomId))
                                                     .then(playerStateService.addPlayerCardId(gameId, userId, cardId)
                                                             .doOnSuccess(v -> log.info("Added cardId {} to player {}'s state in game {}", cardId, userId, gameId)))
-                                                    .then(cardPoolService.addSelectedCard(gameId, cardId))
-                                                    .flatMap(selectedCards -> publishSuccess(roomId, cardId, userId, selectedCards))
-                                            );
+                                                    .then(playerStateService.addToAllPlayersSelectedCardsIds(gameId, cardId)
+                                                            .doOnSuccess(v -> log.info("Added cardId {} to all players' selected cards in game {}", cardId, gameId))))
+                                            .then(cardPoolService.addSelectedCard(gameId, cardId))
+                                            .flatMap(selectedCards -> publishSuccess(roomId, cardId, userId, selectedCards));
 
                                     case "CARD_TAKEN" ->
                                             publishCardError(roomId, userId, cardId, "Card is already taken", "CARD_TAKEN");
@@ -273,6 +274,7 @@ public class CardSelectionService {
                         case "OK" -> cardPoolService.removeSelectedCard(gameId, cardId)
                                 .then(playerStateService.removePlayerCard(gameId, userId, cardId))
                                 .then(playerStateService.removePlayerCardId(gameId, userId, cardId))
+                                .then(playerStateService.removeFromAllPlayersSelectedCardsId(gameId, cardId))
                                 .then(cardPoolService.getSelectedCards(gameId)
                                         .flatMap(selectedCards -> {
 
@@ -364,7 +366,7 @@ public class CardSelectionService {
                         "type", "game.cardSelected",
                         "payload", Map.of(
                                 "cardId", cardId,
-                                "userId", userId.toString(),
+                                "playerId", userId,
                                 "message", "Card claimed successfully",
                                 "selectedCards", selectedCards
                         )
@@ -377,7 +379,7 @@ public class CardSelectionService {
                         "type", "game.cardReleased",
                         "payload", Map.of(
                                 "cardId", cardId,
-                                "userId", userId.toString(),
+                                "userId", userId,
                                 "message", "Card released successfully",
                                 "selectedCards", selectedCards
                         )

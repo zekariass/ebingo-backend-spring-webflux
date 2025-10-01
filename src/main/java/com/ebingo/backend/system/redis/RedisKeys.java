@@ -106,5 +106,9 @@ public final class RedisKeys {
     public static String selectedCardsKey(long gameId) {
         return "game:" + gameId + ":selectedCardsIds";
     }
+
+    public static String allPlayersSelectedCardsIdsKey(Long gameId) {
+        return "game:" + gameId + ":allPlayersSelectedCardsIds";
+    }
 }
 

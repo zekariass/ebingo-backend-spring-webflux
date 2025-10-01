@@ -302,6 +302,33 @@ public class PlayerStateService {
                 .collect(Collectors.toSet());
     }
 
+    public Mono<Set<String>> getAllSelectedCardsIds(Long gameId) {
+        String key = RedisKeys.allPlayersSelectedCardsIdsKey(gameId);
+        return setOps.members(key)
+                .collect(Collectors.toSet());
+    }
+
+    public Mono<Boolean> addToAllPlayersSelectedCardsIds(Long gameId, String cardId) {
+        String key = RedisKeys.allPlayersSelectedCardsIdsKey(gameId);
+        return setOps.add(key, cardId)
+                .flatMap(added -> redis.expire(key, PLAYER_STATE_TTL).thenReturn(added > 0))
+                .onErrorResume(e -> {
+                    log.error("Failed to add to all players selected cards IDs for game {}: {}", gameId, e.getMessage(), e);
+                    return Mono.just(false);
+                });
+    }
+
+    public Mono<Boolean> removeFromAllPlayersSelectedCardsId(Long gameId, String cardId) {
+        String key = RedisKeys.allPlayersSelectedCardsIdsKey(gameId);
+        return setOps.remove(key, cardId)
+                .map(removedCount -> removedCount > 0)
+                .onErrorResume(e -> {
+                    log.error("Failed to remove from all players selected cards IDs for game {}: {}", gameId, e.getMessage(), e);
+                    return Mono.just(false);
+                });
+    }
+
+
     /**
      * Fetch marked numbers for a specific card.
      */
@@ -366,6 +393,7 @@ public class PlayerStateService {
                         .collect(Collectors.toSet())
                 );
     }
+
 
     /**
      * Get all player IDs in a game.

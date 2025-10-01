@@ -31,6 +31,7 @@ public class GameState {
 
     // Read from Player State
     private final Set<String> userSelectedCardsIds = new LinkedHashSet<>();
+    private Set<String> allSelectedCardsIds = new LinkedHashSet<>();
 
     // Card Pool
     private final List<CardInfo> currentCardPool = new ArrayList<>();

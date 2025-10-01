@@ -35,7 +35,7 @@ public class GameStateService {
 
     private final ReactiveRedisTemplate<String, Object> redis;
     private final ReactiveHashOperations<String, String, Object> hashOps;
-    private final ReactiveSetOperations<String, Object> setOps;
+    private final ReactiveSetOperations<String, String> setOps;
     private final CardPoolService cardPoolService;
     private final PlayerStateService playerStateService; // Add this dependency
     private final RedissonReactiveClient redissonReactiveClient;
@@ -58,14 +58,12 @@ public class GameStateService {
                         return getGameState(roomId)
                                 .flatMap(gameState -> playerStateService.getPlayerCardIds(gameState.getGameId(), userId)
                                         .flatMap(uc -> {
-//                                            log.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>: USER CARDS: {}", uc);
                                             gameState.setUserSelectedCardsIds(uc);
 
                                             return Mono.just(gameState);
                                         }));
                     } else {
                         log.info("================================>>>> Game does not exist for room: {} and capacity {}", roomId, capacity);
-//                        log.info("============GameStateService========================>>> CAPACITY RECEIVED {}", capacity);
                         return initializeGameWithLock(roomId, userId, capacity);
                     }
                 });
@@ -109,7 +107,6 @@ public class GameStateService {
         return lock.tryLock(0, 10, TimeUnit.SECONDS) // don't wait, lease 10s
                 .flatMap(isLocked -> {
                     if (Boolean.TRUE.equals(isLocked)) {
-                        //log.info("=================================>>> Instance acquired game initialization lock for room: {}", roomId);
                         return Mono.usingWhen(
                                 Mono.just(lock),
                                 l -> initializeGame(roomId, capacity)
@@ -174,6 +171,9 @@ public class GameStateService {
         gameState.setCurrentCardPool(List.of());
 //        gameState.setNextCardPool(List.of());
         gameState.setJoinedPlayers(Set.of());
+        gameState.setUserSelectedCardsIds(Set.of());
+        gameState.setAllCardIds(Set.of());
+        gameState.setAllSelectedCardsIds(Set.of());
 
         return Mono.when(
                         cardPoolService.generateAndStoreCurrentPool(roomId, capacity)
@@ -374,9 +374,11 @@ public class GameStateService {
                             .defaultIfEmpty(List.of());
                     Mono<Set<String>> allCardIds = cardPoolService.getAllCardIds(roomId)
                             .defaultIfEmpty(Set.of());
+//                    Mono<Set<String>> userSelectedCardsIds = playerStateService.getPlayerCardIds(state.getGameId(), ""); // Placeholder userId
+                    Mono<Set<String>> allSelectedCardsIds = playerStateService.getAllSelectedCardsIds(state.getGameId());
 
                     // Zip everything and apply reactive setters
-                    return Mono.zip(drawnNumbers, players, disqualified, currentCardPool, allCardIds)
+                    return Mono.zip(drawnNumbers, players, disqualified, currentCardPool, allCardIds, allSelectedCardsIds)
                             .flatMap(tuple ->
                                             state.setCurrentCardPool(tuple.getT4())
 //                                            .then(state.setNextCardPool(tuple.getT5()))
@@ -398,6 +400,9 @@ public class GameStateService {
                                                         if (state.getAllCardIds().isEmpty()) {
                                                             state.setAllCardIds(tuple.getT5());
                                                         }
+
+                                                        state.setAllSelectedCardsIds(tuple.getT6());
+
 
 //                                                        state.setUserSelectedCardsIds(tuple.getT6());
                                                         return state;
@@ -493,7 +498,7 @@ public class GameStateService {
     public Mono<Set<String>> getAllPlayers(Long gameId) {
         String playersKey = RedisKeys.gamePlayersKey(gameId);
         return setOps.members(playersKey)
-                .map(obj -> String.valueOf(obj.toString()))  // safer conversion
+                .map(String::valueOf)  // safer conversion
                 .collect(Collectors.toSet())
                 .onErrorResume(e -> {
                     log.warn("Failed to fetch players for game {}: {}", gameId, e.getMessage());
