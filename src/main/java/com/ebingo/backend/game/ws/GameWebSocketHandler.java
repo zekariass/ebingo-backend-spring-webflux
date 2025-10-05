@@ -63,7 +63,7 @@ public class GameWebSocketHandler implements WebSocketHandler {
 
         return jwtDecoder.decode(token)
                 .flatMap(jwt -> {
-                    log.info("==============> WS authenticated for user: {}", jwt.getSubject());
+//                    log.info("==============> WS authenticated for user: {}", jwt.getSubject());
                     return startSession(session, jwt, params);
                 })
                 .onErrorResume(e -> {
@@ -158,11 +158,9 @@ public class GameWebSocketHandler implements WebSocketHandler {
         String type = msg.getType();
         Map<String, Object> payload = msg.getPayload() != null ? msg.getPayload() : Map.of();
         Integer capacity = (Integer) payload.get("capacity");
-//        log.info("============GameWebSocketHandler========================>>> CAPACITY UNPACKED {}", capacity);
 
         switch (type) {
             case "room.getGameStateRequest":
-//                log.info("======================================== CARD POOL. {}", capacity);
                 return gameService.getOrInitializeGame(roomId, userId, capacity)
                         .flatMap(gs -> publisher.publishUserEvent(userId,
                                 Map.of("type", "room.serverGameState", "payload", Map.of(
@@ -175,18 +173,15 @@ public class GameWebSocketHandler implements WebSocketHandler {
             case "card.cardSelectRequest":
                 String cardId = (payload.get("cardId") != null) ? payload.get("cardId").toString() : null;
                 Long gameIdEvent = (payload.get("gameId") != null) ? Long.valueOf(payload.get("gameId").toString()) : null;
-//                String playerId = (payload.get("playerId") != null) ? String.valueOf(payload.get("playerId")) : null;
                 return cardSelectionService.claimCard(roomId, gameIdEvent, userId, cardId, 2).then();
 
             case "card.cardReleaseRequest":
                 String cardId2 = (payload.get("cardId") != null) ? payload.get("cardId").toString() : null;
                 Long gameEventId2 = (payload.get("gameId") != null) ? Long.valueOf(payload.get("gameId").toString()) : null;
-//                String playerId2 = (payload.get("playerId") != null) ? String.valueOf(payload.get("playerId")) : null;
                 return cardSelectionService.releaseCard(roomId, gameEventId2, userId, cardId2).then();
 
             case "game.playerJoinRequest":
                 Long gameEventId3 = (payload.get("gameId") != null) ? Long.valueOf(payload.get("gameId").toString()) : null;
-//                String playerId3 = (payload.get("playerId") != null) ? String.valueOf(payload.get("playerId")) : null;
                 BigDecimal fee3 = (payload.get("fee") != null) ? BigDecimal.valueOf(Double.parseDouble(payload.get("fee").toString())) : null;
                 Integer capacity3 = (payload.get("capacity") != null) ? Integer.parseInt(payload.get("capacity").toString()) : 100;
                 log.info("============GameWebSocketHandler========================>>> params: {}, {}, {}", gameEventId3, fee3, capacity3);
@@ -194,9 +189,6 @@ public class GameWebSocketHandler implements WebSocketHandler {
 
             case "game.playerLeaveRequest":
                 Long gameEventId4 = (payload.get("gameId") != null) ? Long.valueOf(payload.get("gameId").toString()) : null;
-//                String playerId4 = (payload.get("playerId") != null) ? String.valueOf(payload.get("playerId")) : null;
-//                BigDecimal fee4 = (payload.get("fee") != null) ? BigDecimal.valueOf(Double.parseDouble(payload.get("playerId").toString())) : null;
-//                Integer capacity4 = (payload.get("capacity") != null) ? Integer.parseInt(payload.get("capacity").toString()) : 100;
                 return gameService.leaveGame(roomId, gameEventId4, userId);
 
             case "card.markNumberRequest":
@@ -207,12 +199,10 @@ public class GameWebSocketHandler implements WebSocketHandler {
                 Long gameEventId6 = (payload.get("gameId") != null) ? Long.valueOf(payload.get("gameId").toString()) : null;
                 return gameService.unmarkNumber(roomId, gameEventId6, userId, payload);
 
-            case "bingoClaim":
-                if (gameId == null) return Mono.error(new RuntimeException("gameId required to claim bingo"));
-                return gameService.claimBingo(roomId, gameId, userId, username, payload);
+            case "game.bingoClaimRequest":
+                return gameService.claimBingo(roomId, userId, payload);
 
             default:
-                log.info("=============WRONG TYPE=================>>>>: {}", type);
                 return publisher.publishUserEvent(userId,
                         Map.of("type", "error", "payload",
                                 Map.of("message", "unknown_action",

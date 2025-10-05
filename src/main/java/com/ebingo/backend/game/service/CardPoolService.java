@@ -80,39 +80,73 @@ public class CardPoolService {
 //            return Mono.error(e);
 //        }
 //    }
+//    public Mono<List<CardInfo>> generateAndStoreCurrentPool(Long roomId, int capacity) {
+//        // 1. Generate the card pool synchronously
+//
+//        List<CardInfo> cards = BingoCardGenerator.generateCardPool(capacity)
+//                .stream()
+//                .map(card -> new CardInfo(UUID.randomUUID().toString(), card, new HashSet<>()))
+//                .collect(Collectors.toList());
+//
+//        // 2. Serialize and store the entire pool
+//        Mono<Void> storePoolMono = Mono.fromCallable(() -> mapper.writeValueAsString(cards))
+//                .subscribeOn(Schedulers.boundedElastic())
+//                .flatMap(json -> redis.opsForValue().set(RedisKeys.currentCardPoolKey(roomId), json))
+//                .then();
+//
+//
+//        // 3. Serialize and store each card individually in parallel
+//        Flux<Void> storeCardsFlux = Flux.fromIterable(cards)
+//                .flatMap(card ->
+//                                Mono.fromCallable(() -> mapper.writeValueAsString(card))
+//                                        .subscribeOn(Schedulers.boundedElastic())
+//                                        .flatMap(cj ->
+//                                                        redis.opsForValue().set(RedisKeys.roomCardKey(roomId, card.getCardId()), cj)
+////                                                        .then(redis.expire(RedisKeys.roomCardKey(roomId, card.getCardId()), Duration.ofDays(1)))
+//                                                                .then(redis.opsForSet().add(RedisKeys.roomCardsSetKey(roomId), card.getCardId()))
+//                                        )
+
+    /// /                                        .then(redis.expire(RedisKeys.roomCardsSetKey(roomId), Duration.ofDays(1)))
+//                        , 10) // parallelism = 10, adjust as needed
+//                .thenMany(Flux.empty()); // we only care about completion
+//
+//        // 4. Combine pool storage and individual card storage
+//        return storePoolMono
+//                .then(storeCardsFlux.then(Mono.just(cards))); // return list of cards after all stored
+//    }
     public Mono<List<CardInfo>> generateAndStoreCurrentPool(Long roomId, int capacity) {
-        // 1. Generate the card pool synchronously
-        log.info("============CardPoolService========================>>> CAPACITY RECEIVED {}", capacity);
 
         List<CardInfo> cards = BingoCardGenerator.generateCardPool(capacity)
                 .stream()
                 .map(card -> new CardInfo(UUID.randomUUID().toString(), card, new HashSet<>()))
                 .collect(Collectors.toList());
 
-        // 2. Serialize and store the entire pool
+        Mono<Void> deleteMono = redis.delete(
+                RedisKeys.currentCardPoolKey(roomId),
+                RedisKeys.roomCardsSetKey(roomId)
+        ).then();
+
         Mono<Void> storePoolMono = Mono.fromCallable(() -> mapper.writeValueAsString(cards))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(json -> redis.opsForValue().set(RedisKeys.currentCardPoolKey(roomId), json))
                 .then();
 
-
-        // 3. Serialize and store each card individually in parallel
-        Flux<Void> storeCardsFlux = Flux.fromIterable(cards)
+        Mono<Void> storeCardsMono = Flux.fromIterable(cards)
                 .flatMap(card ->
                                 Mono.fromCallable(() -> mapper.writeValueAsString(card))
                                         .subscribeOn(Schedulers.boundedElastic())
                                         .flatMap(cj ->
-                                                        redis.opsForValue().set(RedisKeys.roomCardKey(roomId, card.getCardId()), cj)
-//                                                        .then(redis.expire(RedisKeys.roomCardKey(roomId, card.getCardId()), Duration.ofDays(1)))
-                                                                .then(redis.opsForSet().add(RedisKeys.roomCardsSetKey(roomId), card.getCardId()))
+                                                redis.opsForValue().set(RedisKeys.roomCardKey(roomId, card.getCardId()), cj)
+                                                        .then(redis.opsForSet().add(RedisKeys.roomCardsSetKey(roomId), card.getCardId()))
                                         )
-//                                        .then(redis.expire(RedisKeys.roomCardsSetKey(roomId), Duration.ofDays(1)))
-                        , 10) // parallelism = 10, adjust as needed
-                .thenMany(Flux.empty()); // we only care about completion
+                        , 10
+                )
+                .then();
 
-        // 4. Combine pool storage and individual card storage
-        return storePoolMono
-                .then(storeCardsFlux.then(Mono.just(cards))); // return list of cards after all stored
+        return deleteMono
+                .then(storePoolMono)
+                .then(storeCardsMono)
+                .then(Mono.just(cards));
     }
 
 
@@ -165,7 +199,7 @@ public class CardPoolService {
         return redis.opsForValue().get(RedisKeys.currentCardPoolKey(roomId))
                 .flatMap(json -> {
                     try {
-                        log.info("=========================>>> Current pool: {}", json);
+//                        log.info("=========================>>> Current pool: {}", json);
                         List<CardInfo> cards = mapper.readValue(json, new TypeReference<List<CardInfo>>() {
                         });
                         return Mono.just(cards);

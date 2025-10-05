@@ -33,7 +33,7 @@ public final class GameMapper {
 
         game.setStarted(gs.isStarted());
         game.setEnded(gs.isEnded());
-        game.setStopNumberDrawing(gs.getStopNumberDrawing().get());
+        game.setStopNumberDrawing(gs.getStopNumberDrawing());
         game.setStatus(gs.getStatus());
 
         return game;

@@ -1,223 +1,80 @@
 package com.ebingo.backend.game.service;
 
 import com.ebingo.backend.game.dto.CardInfo;
+import com.ebingo.backend.game.dto.GameEndResponse;
 import com.ebingo.backend.game.enums.BingoColumn;
+import com.ebingo.backend.game.enums.GamePattern;
 import com.ebingo.backend.game.enums.GameStatus;
-import com.ebingo.backend.game.repository.GameRepository;
+import com.ebingo.backend.game.mappers.GameEndResponseMapper;
 import com.ebingo.backend.game.service.state.GameStateService;
+import com.ebingo.backend.game.service.state.PlayerCleanupService;
 import com.ebingo.backend.game.service.state.PlayerStateService;
 import com.ebingo.backend.game.state.GameState;
 import com.ebingo.backend.payment.service.PaymentService;
 import com.ebingo.backend.system.redis.RedisKeys;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.redisson.api.RLockReactive;
-import org.redisson.api.RedissonReactiveClient;
+import org.springframework.data.redis.connection.ReactiveSubscription;
 import org.springframework.data.redis.core.ReactiveSetOperations;
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.data.redis.listener.ChannelTopic;
+import org.springframework.data.redis.listener.ReactiveRedisMessageListenerContainer;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.MonoSink;
 import reactor.core.scheduler.Schedulers;
+import reactor.util.retry.Retry;
 
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
-@RequiredArgsConstructor
+//@RequiredArgsConstructor
 @Slf4j
 public class GameService {
 
     private final Map<Long, GameState> activeGames = new ConcurrentHashMap<>();
     private final RedisPublisher publisher;
     private final CardPoolService cardPoolService;
-    private final GameRepository gameRepo;
     private final BingoPatternVerifier patternVerifier;
     private final PlayerStateService playerStateService;
     private final GameStateService gameStateService;
     private final PaymentService paymentService;
-    private final RedissonReactiveClient redissonReactiveClient;
     private final ReactiveSetOperations<String, String> setOps;
+    private final PlayerCleanupService playerCleanupService;
+    private final ReactiveStringRedisTemplate reactiveRedisTemplate;
+    private final ReactiveRedisMessageListenerContainer redisListenerContainer;
+
+
+    // Stop signal sinks per room
+    private final Map<Long, MonoSink<Void>> stopLoopSinks = new ConcurrentHashMap<>();
+    private final Set<Long> subscribedRooms = ConcurrentHashMap.newKeySet();
 
     private final int drawInterval = 3; // seconds
     private final int minPlayersToStart = 1;
 
+    public GameService(RedisPublisher publisher, CardPoolService cardPoolService, BingoPatternVerifier patternVerifier, PlayerStateService playerStateService, GameStateService gameStateService, PaymentService paymentService, ReactiveSetOperations<String, String> setOps, PlayerCleanupService playerCleanupService, ReactiveStringRedisTemplate reactiveRedisTemplate1, ReactiveRedisMessageListenerContainer redisListenerContainer) {
+        this.publisher = publisher;
+        this.cardPoolService = cardPoolService;
+        this.patternVerifier = patternVerifier;
+        this.playerStateService = playerStateService;
+        this.gameStateService = gameStateService;
+        this.paymentService = paymentService;
+        this.setOps = setOps;
+        this.playerCleanupService = playerCleanupService;
+        this.reactiveRedisTemplate = reactiveRedisTemplate1;
+        this.redisListenerContainer = redisListenerContainer;
+    }
+
     /**
      * Player joins game and optionally selects a card
      */
-//    public Mono<Void> playerJoin(Long roomId, Long gameId, String userId, Integer capacity, BigDecimal entryFee) {
-//        Mono<Boolean> refundPayment = paymentService.processRefund(userId, entryFee);
-//
-//        return paymentService.processPayment(userId, entryFee)   // 1️⃣ charge first
-//                .flatMap(paymentSuccess -> {
-//                    if (!paymentSuccess) {
-//                        return publisher.publishUserEvent(userId,
-//                                Map.of("type", "error", "payload",
-//                                        Map.of("message", "Payment failed for user " + userId, "amount", entryFee))).then();
-//                    }
-//                    return gameStateService.addPlayerToGame(gameId, userId);  // 2️⃣ add player if paid
-//                })
-//                .then(gameStateService.getGameState(gameId))        // 3️⃣ fetch updated state
-//                .flatMap(state -> {
-//                    Set<Long> playerIds = state.getJoinedPlayers();
-//                    int playersCount = playerIds.size();
-//
-//                    // 4️⃣ broadcast to room
-//                    Mono<Long> broadcastPlayers = publisher.publishEvent(
-//                            RedisKeys.roomChannel(roomId),
-//                            Map.of(
-//                                    "type", "playerJoined",
-//                                    "payload", Map.of(
-//                                            "joinedPlayers", playerIds,
-//                                            "playersCount", playersCount
-//                                    )
-//                            )
-//                    );
-//
-//                    // 5️⃣ send personal state to user
-//                    Mono<Void> sendPlayerState = playerStateService.getPlayerState(gameId, userId)
-//                            .flatMap(playerState ->
-//                                    publisher.publishUserEvent(userId,
-//                                            Map.of(
-//                                                    "type", "playerState",
-//                                                    "payload", Map.of(
-//                                                            "userId", userId,
-//                                                            "state", playerState
-//                                                    )
-//                                            )
-//                                    )
-//                            )
-//                            .then();
-//
-//                    // 6️⃣ maybe start countdown (after both above are done)
-//                    Mono<Void> maybeStartCountdown = Mono.defer(() -> {
-//                        if (playerIds.size() >= minPlayersToStart
-//                                && !state.isStarted()
-//                                && state.getStatus().equals(GameStatus.READY)) {
-//                            return startCountdownByGameId(roomId, gameId, capacity, 30);
-//                        } else {
-//                            return Mono.empty();
-//                        }
-//                    });
-//
-//                    // Run broadcast + sendPlayerState in parallel, then countdown
-//                    return Mono.when(broadcastPlayers, sendPlayerState)
-//                            .then(maybeStartCountdown);
-//                })
-//                .then()  // return Mono<Void>
-//                .onErrorResume(error -> {
-//                    log.error("Error in playerJoin for user {} in room {}: {}", userId, roomId, error.getMessage(), error);
-//
-//                    // Refund only if payment was processed
-//                    if (!error.getMessage().contains("Payment failed")) {
-//                        return refundPayment
-//                                .doOnSuccess(refunded -> log.warn("Refund {} for user {} after join failure",
-//                                        refunded ? "succeeded" : "failed", userId))
-//                                .then(Mono.empty());
-//                    }
-//
-//                    return Mono.empty();
-//                });
-//    }
-
-
-//    public Mono<Void> playerJoin(Long roomId, Long gameId, String userId, Integer capacity, BigDecimal entryFee) {
-//        AtomicBoolean paymentCompleted = new AtomicBoolean(false); // track explicitly
-//        Mono<Boolean> refundPayment = paymentService.processRefund(userId, entryFee);
-//
-//
-//        return paymentService.processPayment(userId, entryFee)   // 1️⃣ charge first
-//                .flatMap(paymentSuccess -> {
-//                    if (!paymentSuccess) {
-//                        // No payment → just send error, exit
-//                        return publisher.publishUserEvent(userId,
-//                                Map.of(
-//                                        "type", "error",
-//                                        "payload", Map.of(
-//                                                "message", "Payment failed for user " + userId,
-//                                                "amount", entryFee
-//                                        )
-//                                )).then(Mono.error(new RuntimeException("PAYMENT_FAILED")));
-//                        // short-circuit with error so onErrorResume can distinguish
-//                    }
-//
-//                    log.info("=========================================>>> Payment complete! {}", paymentSuccess);
-//
-//                    // Payment was successful
-//                    paymentCompleted.set(true);
-//
-//                    // 2️⃣ add player
-//                    return gameStateService.addPlayerToGame(gameId, userId);
-//                })
-//                // 3️⃣ fetch updated state
-//                .then(gameStateService.getGameState(roomId)).doOnSuccess(pl -> log.info("============================================>>> PLAYERS: {}", pl))
-//                .flatMap(state -> {
-//                    Set<Long> playerIds = state.getJoinedPlayers();
-//                    int playersCount = playerIds.size();
-//
-//                    log.info("=======================================>>>: playerIds: {}", playerIds.size());
-//
-//                    // 4️⃣ broadcast to room
-//                    Mono<Long> broadcastPlayers = publisher.publishEvent(
-//                            RedisKeys.roomChannel(roomId),
-//                            Map.of(
-//                                    "type", "playerJoined",
-//                                    "payload", Map.of(
-//                                            "joinedPlayers", playerIds,
-//                                            "playersCount", playersCount
-//                                    )
-//                            )
-//                    );
-//
-//                    // 5️⃣ send personal state to user
-//                    Mono<Void> sendPlayerState = playerStateService.getPlayerState(gameId, userId)
-//                            .flatMap(playerState ->
-//                                    publisher.publishUserEvent(userId,
-//                                            Map.of(
-//                                                    "type", "playerState",
-//                                                    "payload", Map.of(
-//                                                            "userId", userId,
-//                                                            "state", playerState
-//                                                    )
-//                                            )
-//                                    )
-//                            )
-//                            .then();
-//
-//                    // 6️⃣ maybe start countdown
-//                    Mono<Void> maybeStartCountdown = Mono.defer(() -> {
-//                        if (playerIds.size() >= minPlayersToStart
-//                                && !state.isStarted()
-//                                && state.getStatus().equals(GameStatus.READY)) {
-//                            return startCountdownByGameId(roomId, gameId, capacity, 30);
-//                        } else {
-//                            return Mono.empty();
-//                        }
-//                    });
-//
-//                    return Mono.when(broadcastPlayers, sendPlayerState)
-//                            .then(maybeStartCountdown);
-//                })
-//                .then()
-//                .onErrorResume(error -> {
-//                    log.error("Error in playerJoin for user {} in room {}: {}",
-//                            userId, roomId, error.getMessage(), error);
-//
-//                    if (paymentCompleted.get()) {
-//                        // refund only if a payment really went through
-//                        return refundPayment
-//                                .doOnSuccess(refunded -> log.warn("Refund {} for user {} after join failure",
-//                                        refunded ? "succeeded" : "failed", userId))
-//                                .then();
-//                    }
-//
-//                    // Payment wasn’t taken → just complete
-//                    return Mono.empty();
-//                });
-//    }
     public Mono<Void> playerJoin(Long roomId, Long gameId, String userId, Integer capacity, BigDecimal entryFee) {
         String playersKey = RedisKeys.gamePlayersKey(gameId);
         AtomicBoolean paymentCompleted = new AtomicBoolean(false);
@@ -227,7 +84,6 @@ public class GameService {
                     if (added == 0) {
                         // Already joined → just send existing state
                         log.info("User {} is already joined in game {}", userId, gameId);
-//                        return sendExistingPlayerState(gameId, userId);
                         return afterSuccessfulJoin(roomId, gameId, userId, capacity);
                     }
 
@@ -292,55 +148,103 @@ public class GameService {
     /**
      * Steps to perform after a successful payment and join.
      */
+
+    /**
+     * Release the countdown lock
+     *
+     * @param redisTemplate
+     * @param lockKey
+     * @return
+     */
+    public Mono<Boolean> releaseCountdownLock(ReactiveStringRedisTemplate redisTemplate, String lockKey) {
+        // Lua script: only delete the key if it exists (simple release)
+        String luaScript = """
+                if redis.call('EXISTS', KEYS[1]) == 1 then
+                    return redis.call('DEL', KEYS[1])
+                else
+                    return 0
+                end
+                """;
+
+        RedisScript<Long> script = RedisScript.of(luaScript, Long.class);
+
+        return redisTemplate.execute(script, List.of(lockKey))
+                .next()
+                .map(result -> result != null && result > 0)
+                .doOnNext(released -> {
+                    if (released) {
+                        log.info("Countdown lock {} released", lockKey);
+                    } else {
+                        log.info("Countdown lock {} was not held", lockKey);
+                    }
+                });
+    }
+
+
     private Mono<Void> afterSuccessfulJoin(Long roomId, Long gameId, String userId, Integer capacity) {
-        log.info("================================>>>>>: afterSuccessfulJoin for user {} in game {}", userId, gameId);
+        log.info("afterSuccessfulJoin: user {} joined game {}", userId, gameId);
+
         return gameStateService.getGameState(roomId)
                 .flatMap(state -> {
-                    log.info("=====================================>>>: GAME STATE: {}", state);
-                    Set<String> playerIds = state.getJoinedPlayers();
-                    int playersCount = playerIds.size();
+                    log.debug("Game state retrieved: {}", state);
 
-                    // Broadcast to room
-                    Mono<Long> broadcastPlayers = publisher.publishEvent(
-                            RedisKeys.roomChannel(roomId),
-                            Map.of(
-                                    "type", "game.playerJoined",
-                                    "payload", Map.of(
-                                            "joinedPlayers", playerIds,
-                                            "playerId", userId,
-                                            "playersCount", playersCount
-                                    )
-                            )
-                    );
+                    Set<String> joinedPlayers = Optional.ofNullable(state.getJoinedPlayers()).orElse(Set.of());
+                    int playersCount = joinedPlayers.size();
 
-                    // Send state to user
-//                    Mono<Void> sendPlayerState = playerStateService.getPlayerState(gameId, userId)
-//                            .flatMap(playerState ->
-//                                    publisher.publishUserEvent(userId,
-//                                            Map.of(
-//                                                    "type", "playerState",
-//                                                    "payload", Map.of(
-//                                                            "userId", userId,
-//                                                            "state", playerState
-//                                                    )
-//                                            )
-//                                    )
-//                            )
-//                            .then();
-
-                    // Maybe start countdown
-                    Mono<Void> maybeStartCountdown = Mono.defer(() -> {
-                        if (playersCount >= minPlayersToStart
-                                && !state.isStarted()
-                                && state.getStatus().equals(GameStatus.READY)) {
-                            return startCountdownByGameId(roomId, gameId, userId, capacity, 20);
-                        }
-                        return Mono.empty();
-                    });
-
-//                    return Mono.when(broadcastPlayers, sendPlayerState).then(maybeStartCountdown);
-                    return Mono.when(broadcastPlayers).then(maybeStartCountdown);
+                    return broadcastPlayerJoin(roomId, userId, joinedPlayers, playersCount)
+                            .then(startCountdownIfEligible(state, roomId, gameId, userId, capacity, playersCount));
                 });
+    }
+
+
+    private Mono<Void> broadcastPlayerJoin(Long roomId, String userId, Set<String> joinedPlayers, int playersCount) {
+        Map<String, Object> payload = Map.of(
+                "type", "game.playerJoined",
+                "payload", Map.of(
+                        "joinedPlayers", joinedPlayers,
+                        "playerId", userId,
+                        "playersCount", playersCount
+                )
+        );
+
+        return publisher.publishEvent(RedisKeys.roomChannel(roomId), payload)
+                .doOnSuccess(id -> log.debug("Broadcasted player join event to room {}", roomId))
+                .then();
+    }
+
+    private Mono<Void> startCountdownIfEligible(GameState state, Long roomId, Long gameId, String userId, Integer capacity, int playersCount) {
+        if (playersCount < minPlayersToStart || state.isStarted() || !GameStatus.READY.equals(state.getStatus())) {
+            return Mono.empty();
+        }
+
+        String countdownLockKey = RedisKeys.countdownLockKey(gameId);
+        RedisScript<Long> acquireLockScript = RedisScript.of("""
+                if redis.call('exists', KEYS[1]) == 0 then
+                    redis.call('set', KEYS[1], ARGV[1])
+                    return 1
+                else
+                    return 0
+                end
+                """, Long.class);
+
+        return reactiveRedisTemplate.execute(acquireLockScript, List.of(countdownLockKey), "locked")
+                .next()
+                .cast(Long.class)
+                .flatMap(acquired -> {
+                    if (acquired != null && acquired == 1) {
+                        log.info("Countdown lock acquired for game {}", gameId);
+                        return startCountdownByGameId(roomId, gameId, userId, capacity, 45)
+                                .then(releaseCountdownLock(reactiveRedisTemplate, countdownLockKey))
+                                .doOnError(err -> log.error("Countdown failed for game {}", gameId, err));
+                    } else {
+                        log.info("Countdown already started for game {}", gameId);
+                        return Mono.empty();
+                    }
+                })
+                .onErrorResume(err -> {
+                    log.error("Error acquiring countdown lock for game {}", gameId, err);
+                    return Mono.empty();
+                }).then();
     }
 
 
@@ -349,8 +253,6 @@ public class GameService {
 
         return gameStateService.getGameState(roomId)
                 .flatMap(state -> {
-
-//                    log.info("=====================================>>>: GAME: {}", state);
                     if (state == null) {
                         return publisher.publishUserEvent(userId,
                                 Map.of(
@@ -377,7 +279,8 @@ public class GameService {
                                         "payload", Map.of(
                                                 "message", "Game already started.",
                                                 "userId", userId,
-                                                "gameId", gameId
+                                                "gameId", gameId,
+                                                "roomId", roomId
                                         )
                                 )).then();
                     }
@@ -409,16 +312,16 @@ public class GameService {
                                                 refunded ? "succeeded" : "failed", userId, gameId));
 
                                 // Personal acknowledgement
-                                Mono<Void> personalAck = publisher.publishUserEvent(userId,
-                                        Map.of(
-                                                "type", "game.playerLeft",
-                                                "payload", Map.of(
-                                                        "userId", userId,
-                                                        "gameId", gameId,
-                                                        "success", true,
-                                                        "message", "You have left the game and refunded."
-                                                )
-                                        )).then();
+//                                Mono<Void> personalAck = publisher.publishUserEvent(userId,
+//                                        Map.of(
+//                                                "type", "game.playerLeft",
+//                                                "payload", Map.of(
+//                                                        "playerId", userId,
+//                                                        "gameId", gameId,
+//                                                        "success", true,
+//                                                        "message", "You have left the game and refunded."
+//                                                )
+//                                        )).then();
 
                                 // Broadcast updated players
                                 Mono<Long> broadcastPlayers = gameStateService.getGameState(roomId)
@@ -426,20 +329,31 @@ public class GameService {
                                             Set<String> players = updatedState.getJoinedPlayers();
                                             int playersCount = players.size();
 
-                                            return publisher.publishEvent(
-                                                    RedisKeys.roomChannel(roomId),
-                                                    Map.of(
-                                                            "type", "playerLeft",
-                                                            "payload", Map.of(
-                                                                    "userId", userId,
-                                                                    "joinedPlayers", players,
-                                                                    "playersCount", playersCount
-                                                            )
-                                                    )
-                                            );
+                                            return playerCleanupService.removePlayerFromGame(roomId, gameId, userId)
+                                                    .flatMap(cardIds -> {
+                                                        return publisher.publishEvent(
+                                                                RedisKeys.roomChannel(roomId),
+                                                                Map.of(
+                                                                        "type", "game.playerLeft",
+                                                                        "payload", Map.of(
+                                                                                "playerId", userId,
+                                                                                "gameId", gameId,
+                                                                                "joinedPlayers", players,
+                                                                                "playersCount", playersCount,
+                                                                                "releasedCardsIds", cardIds,
+                                                                                "roomId", roomId
+                                                                        )
+                                                                )
+                                                        );
+                                                    });
+
+
                                         });
 
-                                return Mono.when(personalAck, refund.then(broadcastPlayers)).then();
+//                                return Mono.when(personalAck, refund.then(broadcastPlayers))
+//                                        .then();
+
+                                return refund.then(broadcastPlayers).then();
                             });
                 })
                 .onErrorResume(error -> {
@@ -463,29 +377,7 @@ public class GameService {
     /**
      * Start countdown for a game
      */
-//    public Mono<Void> startCountdownByGameId(Long roomId, Long gameId, Integer capacity, int countdownSeconds) {
-//
-//        // Publish countdown start event
-//        Mono<Long> countdownEvent = publisher.publishEvent(
-//                RedisKeys.roomChannel(roomId),
-//                Map.of(
-//                        "type", "game.countdown",
-//                        "payload", Map.of(
-//                                "roomId", roomId,
-//                                "gameId", gameId,
-//                                "seconds", countdownSeconds
-//                        )
-//                )
-//        );
-//
-//        // Start countdown sequence after publishing the event
-//        return countdownEvent
-//                .thenMany(Flux.range(0, countdownSeconds)
-//                        .delayElements(Duration.ofSeconds(1))
-//                        .doOnNext(sec -> log.debug("==============================>>>> Countdown {} / {}", sec + 1, countdownSeconds))
-//                )
-//                .then(Mono.defer(() -> startGame(gameId, roomId, capacity))); // Start game after countdown
-//    }
+
     public Mono<Void> startCountdownByGameId(Long roomId, Long gameId, String userId, Integer capacity, int countdownSeconds) {
 
         // Publish countdown start event (only once)
@@ -496,42 +388,34 @@ public class GameService {
                         "payload", Map.of(
                                 "roomId", roomId,
                                 "gameId", gameId,
-                                "seconds", countdownSeconds
+                                "seconds", countdownSeconds,
+                                "endTime", Instant.now().plusSeconds(countdownSeconds).toString()
                         )
                 )
         );
 
-        // Start countdown sequence internally without broadcasting each tick
-//        return countdownEvent
-//                .thenMany(
-//                        Flux.range(0, countdownSeconds)
-//                                .delayElements(Duration.ofSeconds(1))
-//                                .doOnNext(sec -> log.debug("==============================>>>> Countdown {} / {}", sec + 1, countdownSeconds))
-//                )
-//                .then(Mono.defer(() -> startGame(gameId, roomId, capacity))); // Start game after countdown
-
-
         // Run countdown internally, then conditionally start game
         return countdownEvent
                 .thenMany(
-                        Flux.range(0, countdownSeconds)
+                        Flux.range(0, countdownSeconds + 1)
                                 .delayElements(Duration.ofSeconds(1))
                                 .doOnNext(sec -> log.debug("==============================>>>> Countdown {} / {}", sec + 1, countdownSeconds))
                 )
                 .then(
                         // After countdown, check player count again before starting
                         Mono.defer(() ->
-                                gameStateService.getAllPlayers(gameId)
-                                        .flatMap(state -> {
-                                            int playersCount = state.size();
-                                            log.info("Countdown finished. Players: {} / min: {}", playersCount, minPlayersToStart);
-                                            if (playersCount >= minPlayersToStart) {
-                                                return startGame(gameId, roomId, userId, capacity);
-                                            } else {
-                                                log.warn("Not enough players after countdown. Game {} will not start.", gameId);
-                                                return Mono.empty();
-                                            }
-                                        })
+                                        gameStateService.getAllPlayers(gameId)
+                                                .flatMap(state -> {
+                                                    int playersCount = state.size();
+                                                    log.info("Countdown finished. Players: {} / min: {}", playersCount, minPlayersToStart);
+                                                    if (playersCount >= minPlayersToStart) {
+                                                        return startGame(gameId, roomId, userId, capacity);
+                                                    } else {
+                                                        log.warn("Not enough players after countdown. Game {} will not start.", gameId);
+                                                        return Mono.empty();
+//                                                        return startCountdownByGameId(roomId, gameId, userId, capacity, countdownSeconds);
+                                                    }
+                                                })
                         )
                 );
     }
@@ -553,11 +437,15 @@ public class GameService {
                                     RedisKeys.roomChannel(roomId),
                                     Map.of(
                                             "type", "game.started",
-                                            "payload", Map.of("message", "Game has started.") // empty payload
+                                            "payload", Map.of(
+                                                    "message", "Game has started.",
+                                                    "roomId", roomId,
+                                                    "gameId", gameId
+                                            ) // empty payload
                                     )
                             ))
                             .then(
-                                    startNumberDrawingWithLock(state, userId)
+                                    startNumberDrawingWithLuaLock(reactiveRedisTemplate, state, userId)
                                             .onErrorResume(e -> {
                                                 log.error("Number drawing failed", e);
                                                 return Mono.empty();
@@ -569,22 +457,64 @@ public class GameService {
     /**
      * Start number drawing with distributed lock to ensure only one instance handles it
      */
-    private Mono<Void> startNumberDrawingWithLock(GameState state, String userId) {
-        String lockKey = RedisKeys.gameDrawingLockKey(state.getGameId());
-        RLockReactive lock = redissonReactiveClient.getLock(lockKey);
 
-        return lock.tryLock(0, 230, TimeUnit.SECONDS) // No wait, 30-second lease
-                .flatMap(isLocked -> {
-                    if (Boolean.TRUE.equals(isLocked)) {
+    private Mono<Void> startNumberDrawingWithLuaLock(ReactiveStringRedisTemplate redisTemplate,
+                                                     GameState state,
+                                                     String userId) {
+        String lockKey = RedisKeys.gameDrawingLockKey(state.getGameId());
+        String lockValue = UUID.randomUUID().toString(); // unique owner
+        int lockTTLSeconds = 250;
+
+        // Lua script: acquire lock with NX + EX
+        String acquireScriptStr = """
+                if redis.call('set', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[2]) then
+                    return 1
+                else
+                    return 0
+                end
+                """;
+
+        RedisScript<Long> acquireScript = RedisScript.of(acquireScriptStr, Long.class);
+
+        // Lua script: release only if owner matches
+        String releaseScriptStr = """
+                if redis.call('get', KEYS[1]) == ARGV[1] then
+                    return redis.call('del', KEYS[1])
+                else
+                    return 0
+                end
+                """;
+
+        RedisScript<Long> releaseScript = RedisScript.of(releaseScriptStr, Long.class);
+
+        return redisTemplate.execute(acquireScript, List.of(lockKey), lockValue, String.valueOf(lockTTLSeconds))
+                .next()
+                .flatMap(acquired -> {
+                    if (acquired != null && acquired == 1L) {
                         log.info("Instance acquired drawing lock for game {}", state.getGameId());
-                        return drawNumbersLoop(state, userId)
-                                .then(lock.unlock()
-                                        .doOnSuccess(v -> log.info("Released drawing lock for game {}", state.getGameId()))
-                                        .onErrorResume(e -> {
-                                            log.warn("Failed to unlock drawing lock for game {}", state.getGameId(), e);
-                                            return Mono.empty();
-                                        })
-                                );
+
+                        return gameStateService.deleteDrawnNumbers(state.getGameId())
+                                .flatMap(deleted -> {
+                                    return drawNumbersLoop(state, userId)
+                                            .then(redisTemplate.execute(releaseScript, List.of(lockKey), lockValue)
+                                                    .next()
+                                                    .map(result -> result != null && result > 0)
+                                                    .doOnNext(released -> {
+                                                        if (released) {
+                                                            log.info("Released drawing lock for game {}", state.getGameId());
+                                                        } else {
+                                                            log.warn("Lock for game {} was not released (owner mismatch or expired)", state.getGameId());
+                                                        }
+                                                    })
+                                                    .onErrorResume(e -> {
+                                                        log.warn("Failed to unlock drawing lock for game {}", state.getGameId(), e);
+                                                        return Mono.empty();
+                                                    })
+                                            )
+                                            .then();
+
+                                });
+
                     } else {
                         log.info("Another instance is handling number drawing for game {}", state.getGameId());
                         return Mono.empty();
@@ -593,65 +523,247 @@ public class GameService {
     }
 
 
-    /**
-     * Draw numbers until a winner is found or all 75 numbers are called
-     */
+    // =======================
+    // 1️⃣ Auto-subscribe Redis Pub/Sub stop channel
+    // =======================
+    private void autoSubscribeStopChannel(Long roomId) {
+        if (!subscribedRooms.add(roomId)) return; // already subscribed
+
+        String channel = "bingo:room:" + roomId + ":stop";
+
+        redisListenerContainer.receive(new ChannelTopic(channel))
+                .map(ReactiveSubscription.Message::getMessage)
+                .subscribe(message -> {
+                    MonoSink<Void> sink = stopLoopSinks.get(roomId);
+                    if (sink != null) {
+                        sink.success();               // stop the draw loop
+                        stopLoopSinks.remove(roomId); // cleanup
+                    }
+                    subscribedRooms.remove(roomId); // allow resubscribe for new game
+                });
+    }
+
+
+    //    =================================================
+//    private Mono<Void> drawNumbersLoop(GameState state, String userId) {
+//        final Long roomId = state.getRoomId();
+//        final int maxDraws = 15;
+//
+//        // Automatically subscribe to Redis stop channel
+//        autoSubscribeStopChannel(roomId);
+//
+//        return Mono.<Void>create(sink -> {
+//            stopLoopSinks.put(roomId, sink);
+//
+//            Flux.range(1, maxDraws)
+//                    .concatMap(i ->
+//                            Mono.delay(Duration.ofSeconds(drawInterval))
+//                                    .flatMap(tick -> gameStateService.getGameState(roomId))
+//                                    .flatMap(latestState -> {
+//                                        if (latestState.isEnded() || latestState.getStopNumberDrawing()) {
+//                                            log.info("Game {} ended/stopped at iteration {}", latestState.getGameId(), i);
+//                                            return Mono.empty();
+//                                        }
+//
+//                                        // Compute remaining numbers
+//                                        List<Integer> remaining = new ArrayList<>();
+//                                        for (int n = 1; n <= maxDraws; n++) {
+//                                            if (!latestState.getDrawnNumbers().contains(n)) remaining.add(n);
+//                                        }
+//
+//                                        if (remaining.isEmpty()) return Mono.empty();
+//
+//                                        Collections.shuffle(remaining);
+//                                        Integer next = remaining.get(0);
+//
+//                                        log.info("Drawing number {} for game {} remaining: {}", next, latestState.getGameId(), remaining);
+//
+//                                        return drawSingleNumber(latestState, next);
+//                                    })
+//                    )
+//                    // Stop drawing if Redis sends a stop signal
+//                    .takeUntilOther(Mono.<Void>create(innerSink -> stopLoopSinks.put(roomId, innerSink)))
+//                    .then(
+//                            // Grace period for no-winner scenario
+//                            Mono.defer(() -> gameStateService.getGameState(roomId))
+//                                    .flatMap(latestState -> {
+//                                        List<Integer> remaining = new ArrayList<>();
+//                                        for (int n = 1; n <= maxDraws; n++) {
+//                                            if (!latestState.getDrawnNumbers().contains(n)) remaining.add(n);
+//                                        }
+//
+//                                        if (!latestState.isEnded() && remaining.isEmpty()) {
+//                                            log.info("All numbers drawn for game {}. Waiting 3s for potential claims...", latestState.getGameId());
+//
+//                                            return Mono.delay(Duration.ofSeconds(3))
+//                                                    .then(gameStateService.getGameState(roomId))
+//                                                    .flatMap(checkState -> {
+//                                                        if (!checkState.isEnded() && !checkState.getClaimRequested()) {
+//                                                            log.info("No claims received. Ending game {} as no-winner.", checkState.getGameId());
+//
+//                                                            GameEndResponse response = GameEndResponse.builder()
+//                                                                    .gameId(checkState.getGameId())
+//                                                                    .cardId("")
+//                                                                    .playerId("")
+//                                                                    .playerName("No Winner")
+//                                                                    .pattern("")
+//                                                                    .prizeAmount(BigDecimal.ZERO)
+//                                                                    .hasWinner(false)
+//                                                                    .winAt(LocalDateTime.now())
+//                                                                    .markedNumbers(Set.of())
+//                                                                    .card(new CardInfo())
+//                                                                    .build();
+//
+//                                                            return endGame(checkState, userId, response).then();
+//                                                        }
+//                                                        log.info("Claim detected during grace period for game {}. Skipping no-winner ending.", checkState.getGameId());
+//                                                        return Mono.empty();
+//                                                    });
+//                                        }
+//                                        return Mono.empty();
+//                                    })
+//                    )
+//                    .doFinally(signal -> stopLoopSinks.remove(roomId))
+//                    .subscribe();
+//        });
+//    }
     private Mono<Void> drawNumbersLoop(GameState state, String userId) {
-        return Mono.defer(() -> {
-            // Get current state from Redis to ensure we have the latest
-            return gameStateService.getGameState(state.getRoomId())
-                    .flatMap(latestState -> {
-                        if (latestState.isEnded() || latestState.getStopNumberDrawing().get()) {
-                            log.info("Game {} already ended, stopping number drawing", latestState.getGameId());
-                            return Mono.empty();
-                        }
+        final Long roomId = state.getRoomId();
+        final int maxDraws = 15;
+        final String endLockKey = "game:end-lock:" + roomId; // 🧩 New lock key for endGame
 
-                        List<Integer> remaining = new ArrayList<>();
-                        for (int i = 1; i <= 15; i++) {
-                            if (!latestState.getDrawnNumbers().contains(i)) {
-                                remaining.add(i);
-                            }
-                        }
+        // Automatically subscribe to Redis stop channel
+        autoSubscribeStopChannel(roomId);
 
-                        if (remaining.isEmpty()) {
-                            log.info("All numbers drawn for game {}", latestState.getGameId());
-                            return endGameNoWinner(latestState, userId);
-                        }
+        return Mono.<Void>create(sink -> {
+            stopLoopSinks.put(roomId, sink);
 
-                        Collections.shuffle(remaining);
+            Flux.range(1, maxDraws)
+                    .concatMap(i ->
+                            Mono.delay(Duration.ofSeconds(drawInterval))
+                                    .flatMap(tick -> gameStateService.getGameState(roomId))
+                                    .flatMap(latestState -> {
+                                        if (latestState.isEnded() || latestState.getStopNumberDrawing()) {
+                                            log.info("Game {} ended/stopped at iteration {}", latestState.getGameId(), i);
+                                            return Mono.empty();
+                                        }
 
-                        return Flux.fromIterable(remaining)
-                                .delayElements(Duration.ofSeconds(drawInterval))
-                                .takeUntil(num -> latestState.isEnded() || latestState.getStopNumberDrawing().get())
-                                .concatMap(num -> drawSingleNumber(latestState, num))
-                                .doFinally(signal -> {
-                                    if (!latestState.isEnded() && !latestState.getStopNumberDrawing().get()) {
-                                        log.info("All numbers drawn with no winner for game {}, ending game", latestState.getGameId());
-                                        endGameNoWinner(latestState, userId).subscribe();
-                                    } else {
-                                        log.info("Number drawing stopped for game {} with signal {}", latestState.getGameId(), signal);
-                                    }
-                                })
-                                .then();
-                    });
+                                        // Compute remaining numbers
+                                        List<Integer> remaining = new ArrayList<>();
+                                        for (int n = 1; n <= maxDraws; n++) {
+                                            if (!latestState.getDrawnNumbers().contains(n)) remaining.add(n);
+                                        }
+
+                                        if (remaining.isEmpty()) return Mono.empty();
+
+                                        Collections.shuffle(remaining);
+                                        Integer next = remaining.get(0);
+
+                                        log.info("Drawing number {} for game {} remaining: {}", next, latestState.getGameId(), remaining);
+
+                                        return drawSingleNumber(latestState, next);
+                                    })
+                    )
+                    // Stop drawing if Redis sends a stop signal
+                    .takeUntilOther(Mono.<Void>create(innerSink -> stopLoopSinks.put(roomId, innerSink)))
+                    .doFinally(signal -> stopLoopSinks.remove(roomId))
+                    .then(
+                            // 🧩 After drawing finishes, handle potential no-winner ending safely
+                            Mono.defer(() ->
+                                    gameStateService.getGameState(roomId)
+                                            .flatMap(latestState -> {
+                                                if (latestState.isEnded() || latestState.getStopNumberDrawing()) {
+                                                    log.info("Game {} already ended before no-winner check", latestState.getGameId());
+                                                    return Mono.empty();
+                                                }
+
+                                                // Compute remaining numbers
+                                                List<Integer> remaining = new ArrayList<>();
+                                                for (int n = 1; n <= maxDraws; n++) {
+                                                    if (!latestState.getDrawnNumbers().contains(n)) remaining.add(n);
+                                                }
+
+                                                if (!remaining.isEmpty()) {
+                                                    log.info("Game {} still has remaining numbers, skipping no-winner end", latestState.getGameId());
+                                                    return Mono.empty();
+                                                }
+
+                                                log.info("All numbers drawn for game {}. Waiting {}s for potential claims...", latestState.getGameId(), 3);
+
+                                                return Mono.delay(Duration.ofSeconds(3))
+                                                        .then(gameStateService.getGameState(roomId))
+                                                        .flatMap(checkState -> {
+                                                            if (checkState.isEnded() || checkState.getClaimRequested()) {
+                                                                log.info("Claim detected or game ended for {} — skipping no-winner end", checkState.getGameId());
+                                                                return Mono.empty();
+                                                            }
+
+                                                            // 🧩 Try to acquire end-lock before marking game ended
+                                                            return reactiveRedisTemplate.opsForValue().setIfAbsent(endLockKey, "locked", Duration.ofSeconds(10))
+                                                                    .flatMap(acquired -> {
+                                                                        if (!Boolean.TRUE.equals(acquired)) {
+                                                                            log.info("Another instance is already ending game {}", checkState.getGameId());
+                                                                            return Mono.empty();
+                                                                        }
+
+                                                                        log.info("No claims received. Ending game {} as no-winner.", checkState.getGameId());
+
+                                                                        GameEndResponse response = GameEndResponse.builder()
+                                                                                .gameId(checkState.getGameId())
+                                                                                .cardId("")
+                                                                                .playerId("")
+                                                                                .playerName("No Winner")
+                                                                                .pattern("")
+                                                                                .prizeAmount(BigDecimal.ZERO)
+                                                                                .hasWinner(false)
+                                                                                .winAt(LocalDateTime.now())
+                                                                                .markedNumbers(Set.of())
+                                                                                .card(new CardInfo())
+                                                                                .build();
+
+                                                                        return gameStateService.getGameState(roomId)
+                                                                                .flatMap(gameState -> {
+                                                                                    if (!gameState.isEnded() && !gameState.getStopNumberDrawing()) {
+                                                                                        return endGame(checkState, userId, response).then();
+                                                                                    }
+                                                                                    return Mono.empty();
+                                                                                })
+                                                                                .onErrorResume(err -> {
+                                                                                    log.info("Error in endGame: {}", err.getMessage());
+                                                                                    return Mono.empty();
+                                                                                })
+                                                                                .then(reactiveRedisTemplate.delete(endLockKey)) // release lock
+                                                                                .onErrorResume(err ->
+                                                                                        reactiveRedisTemplate.delete(endLockKey).then(Mono.error(err))
+                                                                                );
+                                                                    });
+                                                        });
+                                            })
+                            )
+                    )
+                    .doFinally(signal -> log.info("Number drawing loop for room {} finished with signal {}", roomId, signal))
+                    .subscribe();
         });
     }
+
 
     /**
      * Draw a single number and update state
      */
     private Mono<Void> drawSingleNumber(GameState state, Integer number) {
         return Mono.defer(() -> {
-            if (state.isEnded() || state.getStopNumberDrawing().get()) {
+            if (state.isEnded() || state.getStopNumberDrawing()) {
                 log.info("=============================>>> Game {} ended during drawing, stopping", state.getGameId());
                 return Mono.empty(); // Stop if game ended
             }
 
             state.getDrawnNumbers().add(number);
-            log.info("Drawing number {} for game {}", number, state.getGameId());
+            log.info("Drawing number {} for game {}: ", number, state.getGameId());
+            log.info("=====================================>>>: DRAWN NUMBERS: {}", state.getDrawnNumbers());
 
             // Save updated state to Redis
             return gameStateService.saveGameStateToRedis(state, state.getRoomId())
+                    .then(gameStateService.addOrInitDrawnNumber(state.getGameId(), number))
                     .then(publisher.publishEvent(
                             RedisKeys.roomChannel(state.getRoomId()),
                             Map.of("type", "game.numberDrawn",
@@ -664,383 +776,19 @@ public class GameService {
     /**
      * End game when no winner is found (all numbers drawn)
      */
-    private Mono<Void> endGameNoWinner(GameState state, String userId) {
+    private Mono<Void> endGame(GameState state, String userId, GameEndResponse responseObject) {
         state.setEnded(true);
         state.setStatus(GameStatus.COMPLETED);
 
-        return gameStateService.saveGameStateToRedis(state, state.getRoomId())
-                .then(publisher.publishEvent(
-                        RedisKeys.roomChannel(state.getRoomId()),
-                        Map.of("type", "game.ended", "payload", Map.of(
-                                "gameId", state.getGameId(),
-                                "playerId", userId,
-                                "playerName", "No Winner",
-                                "cardId", "",
-                                "pattern", "",
-                                "prizeAmount", 0,
-                                "winAt", "",
-                                "hasWinner", false
-                        ))
-                ))
-                .then(gameStateService.deleteGameState(state.getRoomId()))
-                .then();
-    }
+        Long gameId = state.getGameId();
 
-    /**
-     * Claim bingo for any of the player's cards
-     */
-//    public Mono<Void> claimBingo(Long roomId,
-//                                 Long gameId,
-//                                 String userId,
-//                                 String username, Map<String, Object> payload) {
-//
-//        String cardId = (String) payload.get("cardId");
-//        List<Integer> markedList = (List<Integer>) payload.get("markedNumbers");
-//        Set<Integer> markedNumbers = new HashSet<>(markedList);
-//        String pattern = (String) payload.get("pattern");
-//
-//        return gameStateService.getGameState(roomId)
-//                .flatMap(state -> {
-//                    // Validate game state
-//                    if (!state.isStarted() || state.isEnded()) {
-//                        log.warn("User {} attempted to claim bingo but game {} is not active", userId, gameId);
-//                        return Mono.error(new RuntimeException("Game not active"));
-//                    }
-//                    if (state.getDisqualifiedUsers().contains(userId)) {
-//                        log.warn("User {} attempted to claim bingo but is disqualified in game {}", userId, gameId);
-//                        return Mono.error(new RuntimeException("You are disqualified"));
-//                    }
-//
-//                    // Parallel fetch: all players + player cards
-//                    return Mono.zip(
-//                                    gameStateService.getAllPlayers(gameId),
-//                                    playerStateService.getPlayerCards(gameId, userId)
-//                            )
-//                            .flatMap(tuple -> {
-//                                Set<Long> players = tuple.getT1();
-//                                Map<String, CardInfo> playerCards = tuple.getT2();
-//
-//                                // Validate player
-//                                if (!players.contains(userId)) {
-//                                    log.info("User {} is not in game {}", userId, gameId);
-//                                    return publisher.publishUserEvent(userId,
-//                                            Map.of(
-//                                                    "type", "error",
-//                                                    "payload", Map.of(
-//                                                            "message", "User is not in game",
-//                                                            "errorType", "USER_NOT_IN_GAME"
-//                                                    )
-//                                            )
-//                                    ).then(); // early exit
-//                                }
-//
-//                                // Validate card existence
-//                                CardInfo cardInfo = playerCards.get(cardId);
-//                                if (cardInfo == null) {
-//                                    log.info("User {} does not have card {} in game {}", userId, cardId, gameId);
-//                                    return publisher.publishUserEvent(userId,
-//                                            Map.of(
-//                                                    "type", "error",
-//                                                    "payload", Map.of(
-//                                                            "message", "Card not found",
-//                                                            "errorType", "CARD_NOT_FOUND"
-//                                                    )
-//                                            )
-//                                    ).then(); // early exit
-//                                }
-//
-//                                // Validate marked numbers
-////                                Set<Integer> playerMarkedNumbers = cardInfo.getMarked();
-//                                playerStateService.getMarkedNumbers(roomId, userId, cardId)
-//                                        .flatMap(playerMarkedNumbers -> {
-//                                            if (!markedNumbers.containsAll(playerMarkedNumbers)) {
-//                                                log.info("User {} submitted invalid marked numbers for card {} in game {}", userId, cardId, gameId);
-//                                                return publisher.publishUserEvent(userId,
-//                                                        Map.of(
-//                                                                "type", "error",
-//                                                                "payload", Map.of(
-//                                                                        "message", "Marked numbers mismatch",
-//                                                                        "errorType", "MARKED_NUMBERS_MISMATCH"
-//                                                                )
-//                                                        )
-//                                                ).then(); // early exit
-//                                            }
-//
-//                                            return Mono.empty();
-//
-//                                        });
-//
-//                                Map<BingoColumn, List<Integer>> card = cardInfo.getNumbers();
-//
-//                                // Pattern verification (CPU-heavy offloaded)
-//                                return Mono.fromCallable(() -> {
-//                                            if (pattern != null && !pattern.isBlank()) {
-//                                                return patternVerifier.verifyPattern(card, playerMarkedNumbers, pattern);
-//                                            } else {
-//                                                return patternVerifier.verifyLineOrFourCorners(card, new HashSet<>(playerMarkedNumbers));
-//                                            }
-//                                        })
-//                                        .subscribeOn(Schedulers.boundedElastic())
-//                                        .flatMap(isWinner -> {
-//                                            if (isWinner) {
-//                                                // Winner handling
-//                                                log.info("User {} is the winner in game {}", userId, gameId);
-//                                                state.getStopNumberDrawing().set(true);
-//                                                state.setEnded(true);
-//                                                state.setStatus(GameStatus.COMPLETED);
-//
-//                                                return gameStateService.saveGameStateToRedis(state, state.getRoomId())
-//                                                        .then(publisher.publishEvent(
-//                                                                RedisKeys.gameChannel(gameId),
-//                                                                Map.of(
-//                                                                        "type", "bingoWinner",
-//                                                                        "payload", Map.of(
-//                                                                                "userId", userId,
-//                                                                                "userName", username,
-//                                                                                "cardId", cardId,
-//                                                                                "markedNumbers", playerMarkedNumbers
-//                                                                        )
-//                                                                )
-//                                                        ))
-//                                                        .then(gameStateService.deleteGameState(roomId))
-//                                                        .doOnError(e -> log.error("Failed to delete game state for room {}", roomId, e))
-//                                                        .then(); // final Mono<Void>
-//                                            } else {
-//                                                // Non-winner handling
-//                                                log.info("User {} did not win in game {}, disqualifying", userId, gameId);
-//                                                state.getDisqualifiedUsers().add(userId);
-//
-//                                                return gameStateService.saveGameStateToRedis(state, state.getRoomId())
-//                                                        .then(publisher.publishEvent(
-//                                                                RedisKeys.gameChannel(gameId),
-//                                                                Map.of(
-//                                                                        "type", "invalidBingoRequest",
-//                                                                        "payload", Map.of(
-//                                                                                "userId", userId,
-//                                                                                "cardId", cardId,
-//                                                                                "markedNumbers", markedNumbers
-//                                                                        )
-//                                                                )
-//                                                        ))
-//                                                        .then(); // final Mono<Void>
-//                                            }
-//                                        });
-//                            });
-//                })
-//                .doOnError(e -> log.error("Error while claiming bingo for user {} in game {}", userId, gameId, e));
-//    }
-    public Mono<Void> claimBingo(Long roomId,
-                                 Long gameId,
-                                 String userId,
-                                 String username,
-                                 Map<String, Object> payload) {
-
-        // Validate payload
-        String cardId = (String) payload.get("cardId");
-        @SuppressWarnings("unchecked")
-        List<Integer> markedList = (List<Integer>) payload.get("markedNumbers");
-        if (cardId == null || markedList == null) {
-            return publisher.publishUserEvent(userId,
-                    Map.of(
-                            "type", "error",
-                            "payload", Map.of(
-                                    "message", "Invalid claim payload",
-                                    "errorType", "INVALID_CLAIM"
-                            )
-                    )).then();
-        }
-
-        Set<Integer> claimedMarkedNumbers = new HashSet<>(markedList);
-        String pattern = (String) payload.get("pattern");
-
-        // Top-level: get current game state (or send error if missing)
-        return gameStateService.getGameState(roomId)
-                .switchIfEmpty(Mono.defer(() ->
-                        publisher.publishUserEvent(userId,
-                                Map.of(
-                                        "type", "error",
-                                        "payload", Map.of(
-                                                "message", "Game not found",
-                                                "errorType", "GAME_NOT_FOUND"
-                                        )
-                                )
-                        ).then(Mono.empty())
-                ))
-                .flatMap(state -> {
-                    // Validate game status
-                    if (!state.isStarted() || state.isEnded()) {
-                        return publisher.publishUserEvent(userId,
-                                Map.of(
-                                        "type", "error",
-                                        "payload", Map.of(
-                                                "message", "Game not active",
-                                                "errorType", "GAME_NOT_ACTIVE"
-                                        )
-                                )).then();
-                    }
-                    if (state.getDisqualifiedUsers().contains(userId)) {
-                        return publisher.publishUserEvent(userId,
-                                Map.of(
-                                        "type", "error",
-                                        "payload", Map.of(
-                                                "message", "You are disqualified",
-                                                "errorType", "DISQUALIFIED"
-                                        )
-                                )).then();
-                    }
-
-                    // Parallel fetch: players in game + this player's cards
-                    return Mono.zip(
-                                    gameStateService.getAllPlayers(gameId),
-                                    playerStateService.getPlayerCards(gameId, userId)
-                            )
-                            .flatMap(tuple -> {
-                                Set<String> players = tuple.getT1();
-                                Map<String, CardInfo> playerCards = tuple.getT2();
-
-                                // Validate player membership
-                                if (!players.contains(userId)) {
-                                    return publisher.publishUserEvent(userId,
-                                            Map.of(
-                                                    "type", "error",
-                                                    "payload", Map.of(
-                                                            "message", "User is not in game",
-                                                            "errorType", "USER_NOT_IN_GAME"
-                                                    )
-                                            )).then();
-                                }
-
-                                CardInfo cardInfo = playerCards.get(cardId);
-                                if (cardInfo == null) {
-                                    return publisher.publishUserEvent(userId,
-                                            Map.of(
-                                                    "type", "error",
-                                                    "payload", Map.of(
-                                                            "message", "Card not found",
-                                                            "errorType", "CARD_NOT_FOUND"
-                                                    )
-                                            )).then();
-                                }
-
-                                // Fetch server-tracked marked numbers (reactive) and continue the chain
-                                return playerStateService.getMarkedNumbers(roomId, userId, cardId)
-                                        .flatMap(serverMarkedNumbers -> {
-                                            // Validate submitted numbers vs server-marked numbers
-                                            // NOTE: pick your desired semantics. Here we require client's claimed set to contain all server-marked numbers.
-                                            if (!claimedMarkedNumbers.containsAll(serverMarkedNumbers)) {
-                                                return publisher.publishUserEvent(userId,
-                                                        Map.of(
-                                                                "type", "error",
-                                                                "payload", Map.of(
-                                                                        "message", "Marked numbers mismatch",
-                                                                        "errorType", "MARKED_NUMBERS_MISMATCH"
-                                                                )
-                                                        )).then();
-                                            }
-
-                                            // Prepare data for pattern verification
-                                            Map<BingoColumn, List<Integer>> cardNumbers = cardInfo.getNumbers();
-                                            Set<Integer> numbersToVerify = new HashSet<>(serverMarkedNumbers);
-
-                                            // CPU-heavy verification offloaded to boundedElastic
-                                            Mono<Boolean> isWinnerMono = Mono.fromCallable(() -> {
-                                                        if (pattern != null && !pattern.isBlank()) {
-                                                            return patternVerifier.verifyPattern(cardNumbers, numbersToVerify, pattern);
-                                                        } else {
-                                                            return patternVerifier.verifyLineOrFourCorners(cardNumbers, numbersToVerify);
-                                                        }
-                                                    })
-                                                    .subscribeOn(Schedulers.boundedElastic());
-
-                                            // Evaluate winner and update state atomically-ish (re-check state)
-                                            return isWinnerMono.flatMap(isWinner -> {
-                                                if (Boolean.TRUE.equals(isWinner)) {
-                                                    // Re-fetch latest state to avoid race and check if someone already finished
-                                                    return gameStateService.getGameState(roomId)
-                                                            .flatMap(latestState -> {
-                                                                if (latestState.isEnded()) {
-                                                                    // someone else already ended the game; notify the claimer
-                                                                    return publisher.publishUserEvent(userId,
-                                                                            Map.of(
-                                                                                    "type", "bingoResult",
-                                                                                    "payload", Map.of(
-                                                                                            "success", false,
-                                                                                            "message", "Game already finished"
-                                                                                    )
-                                                                            )).then();
-                                                                }
-
-                                                                // Mark game ended
-                                                                latestState.getStopNumberDrawing().set(true);
-                                                                latestState.setEnded(true);
-                                                                latestState.setStatus(GameStatus.COMPLETED);
-
-                                                                return gameStateService.saveGameStateToRedis(latestState, latestState.getRoomId())
-                                                                        .then(saveGameToDatabase(latestState)) // async save to DB
-                                                                        .then(publisher.publishEvent(
-                                                                                RedisKeys.gameChannel(gameId),
-                                                                                Map.of(
-                                                                                        "type", "bingoWinner",
-                                                                                        "payload", Map.of(
-                                                                                                "userId", userId,
-                                                                                                "userName", username,
-                                                                                                "cardId", cardId,
-                                                                                                "markedNumbers", serverMarkedNumbers
-                                                                                        )
-                                                                                )
-                                                                        ))
-                                                                        .then(gameStateService.deleteGameState(roomId))
-                                                                        .then(); // Mono<Void>
-                                                            });
-                                                } else {
-                                                    // Not a winner → disqualify the user
-                                                    return gameStateService.getGameState(roomId)
-                                                            .flatMap(latestState -> {
-                                                                // If already ended, just notify
-                                                                if (latestState.isEnded()) {
-                                                                    return publisher.publishUserEvent(userId,
-                                                                            Map.of(
-                                                                                    "type", "bingoResult",
-                                                                                    "payload", Map.of(
-                                                                                            "success", false,
-                                                                                            "message", "Game already finished"
-                                                                                    )
-                                                                            )).then();
-                                                                }
-
-                                                                latestState.getDisqualifiedUsers().add(userId);
-
-                                                                return gameStateService.saveGameStateToRedis(latestState, latestState.getRoomId())
-                                                                        .then(publisher.publishEvent(
-                                                                                RedisKeys.gameChannel(gameId),
-                                                                                Map.of(
-                                                                                        "type", "invalidBingoRequest",
-                                                                                        "payload", Map.of(
-                                                                                                "userId", userId,
-                                                                                                "cardId", cardId,
-                                                                                                "markedNumbers", new ArrayList<>(claimedMarkedNumbers)
-                                                                                        )
-                                                                                )
-                                                                        )).then();
-                                                            });
-                                                }
-                                            });
-                                        });
-                            });
-                })
-                .onErrorResume(e -> {
-                    // Log and notify user
-                    log.error("Error while claiming bingo for user {} in game {}", userId, gameId, e);
-                    return publisher.publishUserEvent(userId,
-                            Map.of(
-                                    "type", "error",
-                                    "payload", Map.of(
-                                            "message", "Failed to process bingo claim",
-                                            "errorType", "CLAIM_ERROR",
-                                            "details", e.getMessage()
-                                    )
-                            )).then();
-                });
+//        return gameStateService.saveGameStateToRedis(state, state.getRoomId())
+        return gameStateService.deleteGameState(state.getRoomId())
+                .then(
+                        publisher.publishEvent(
+                                RedisKeys.roomChannel(state.getRoomId()),
+                                Map.of("type", "game.ended", "payload", GameEndResponseMapper.toMap(responseObject))
+                        )).then();
     }
 
     private Mono<Boolean> saveGameToDatabase(GameState latestState) {
@@ -1048,16 +796,360 @@ public class GameService {
     }
 
 
+    // =======================
+    // 3️⃣ Claim Bingo (multi-instance safe)
+    // =======================
+//    public Mono<Void> claimBingo(Long roomId, String userId, Map<String, Object> payload) {
+//        log.info("BINGO CLAIM PAYLOAD: {}", payload);
+//
+//        Long gameId = payload.get("gameId") != null ? Long.valueOf(payload.get("gameId").toString()) : null;
+//        String playerName = payload.get("playerName") != null ? payload.get("playerName").toString() : "";
+//        String cardId = payload.get("cardId") != null ? payload.get("cardId").toString() : "";
+//        @SuppressWarnings("unchecked")
+//        List<Integer> markedList = (List<Integer>) payload.get("markedNumbers");
+//        String pattern = payload.get("pattern") != null ? payload.get("pattern").toString() : GamePattern.LINE_AND_CORNERS.name();
+//
+//        if (cardId == null || markedList == null || gameId == null) {
+//            return sendUserError(userId, cardId, "INVALID_CLAIM", "Invalid claim data");
+//        }
+//
+//        Set<Integer> claimedMarkedNumbers = new HashSet<>(markedList);
+//        String claimLockKey = "game:" + gameId + ":claim-lock";
+//
+//        String luaClaimLock = """
+//                if redis.call('exists', KEYS[1]) == 0 then
+//                    redis.call('set', KEYS[1], ARGV[1], 'EX', 10)
+//                    return 1
+//                else
+//                    return 0
+//                end
+//                """;
+//
+//        RedisScript<Long> acquireClaimLockScript = RedisScript.of(luaClaimLock, Long.class);
+//
+//        return Mono.defer(() ->
+//                        gameStateService.getGameState(roomId)
+//                                .flatMap(state -> {
+//                                    if (state.isEnded()) return Mono.error(new IllegalStateException("GAME_ENDED"));
+//
+//                                    return reactiveRedisTemplate.execute(acquireClaimLockScript, List.of(claimLockKey), userId)
+//                                            .next()
+//                                            .flatMap(acquired -> {
+//                                                if (acquired == null || acquired != 1)
+//                                                    return Mono.error(new IllegalStateException("LOCK_BUSY"));
+//                                                return Mono.just(true);
+//                                            });
+//                                })
+//                )
+//                .retryWhen(Retry.backoff(10, Duration.ofMillis(100))
+//                        .maxBackoff(Duration.ofSeconds(2))
+//                        .filter(e -> e instanceof IllegalStateException && "LOCK_BUSY".equals(e.getMessage()))
+//                        .onRetryExhaustedThrow((spec, signal) -> new RuntimeException("Failed to acquire claim lock after retries"))
+//                )
+//                .onErrorResume(e -> {
+//                    if (e instanceof IllegalStateException && "GAME_ENDED".equals(e.getMessage())) {
+//                        return sendUserError(userId, cardId, "GAME_ALREADY_COMPLETED", "Game already completed").hasElement();
+//                    }
+//                    return Mono.error(e);
+//                })
+//                .flatMap(ignored ->
+//                        Mono.zip(
+//                                        gameStateService.getAllPlayers(gameId),
+//                                        playerStateService.getPlayerCards(gameId, userId)
+//                                )
+//                                .flatMap(tuple -> {
+//                                    Set<String> players = tuple.getT1();
+//                                    Map<String, CardInfo> playerCards = tuple.getT2();
+//
+//                                    if (!players.contains(userId))
+//                                        return releaseClaimLock(claimLockKey, userId).then(sendUserError(userId, cardId, "USER_NOT_IN_GAME", "You are not in the game"));
+//
+//                                    CardInfo cardInfo = playerCards.get(cardId);
+//                                    if (cardInfo == null)
+//                                        return releaseClaimLock(claimLockKey, userId).then(sendUserError(userId, cardId, "CARD_NOT_FOUND", "Card not found"));
+//
+//                                    return playerStateService.getMarkedNumbers(gameId, userId, cardId)
+//                                            .flatMap(serverMarkedNumbers -> {
+//                                                if (!claimedMarkedNumbers.containsAll(serverMarkedNumbers)) {
+//                                                    return releaseClaimLock(claimLockKey, userId)
+//                                                            .then(sendUserError(userId, cardId, "MARKED_NUMBERS_MISMATCH", "Marked numbers mismatch"));
+//                                                }
+//
+//                                                return Mono.fromCallable(() -> {
+//                                                            Map<BingoColumn, List<Integer>> cardNumbers = cardInfo.getNumbers();
+//                                                            if (pattern != null && !pattern.isBlank()) {
+//                                                                return patternVerifier.verifyPattern(cardNumbers, new HashSet<>(serverMarkedNumbers), pattern);
+//                                                            } else {
+//                                                                return patternVerifier.verifyLineOrFourCorners(cardNumbers, new HashSet<>(serverMarkedNumbers));
+//                                                            }
+//                                                        })
+//                                                        .subscribeOn(Schedulers.boundedElastic())
+//                                                        .flatMap(isWinner -> {
+//                                                            if (!Boolean.TRUE.equals(isWinner)) {
+//                                                                return releaseClaimLock(claimLockKey, userId)
+//                                                                        .then(sendUserError(userId, cardId, "INVALID_BINGO_CLAIM", "Invalid claim"));
+//                                                            }
+//
+//                                                            return gameStateService.getGameState(roomId)
+//                                                                    .flatMap(state -> {
+//                                                                        if (state.isEnded())
+//                                                                            return releaseClaimLock(claimLockKey, userId)
+//                                                                                    .then(sendUserError(userId, cardId, "GAME_ALREADY_COMPLETED", "Game already completed"));
+//
+//                                                                        state.setEnded(true);
+//                                                                        state.setStatus(GameStatus.COMPLETED);
+//                                                                        state.setClaimRequested(true);
+//                                                                        state.setStopNumberDrawing(true);
+//
+//                                                                        return gameStateService.saveGameStateToRedis(state, roomId)
+//                                                                                .then(saveGameToDatabase(state))
+//                                                                                .then(cardPoolService.getCard(roomId, cardId))
+//                                                                                .flatMap(card -> {
+//                                                                                    GameEndResponse response = GameEndResponse.builder()
+//                                                                                            .gameId(state.getGameId())
+//                                                                                            .cardId(cardId)
+//                                                                                            .playerId(userId)
+//                                                                                            .playerName(playerName)
+//                                                                                            .pattern(pattern)
+//                                                                                            .prizeAmount(BigDecimal.ZERO)
+//                                                                                            .hasWinner(true)
+//                                                                                            .winAt(LocalDateTime.now())
+//                                                                                            .markedNumbers(serverMarkedNumbers)
+//                                                                                            .card(card)
+//                                                                                            .build();
+//
+//                                                                                    String channel = "bingo:room:" + roomId + ":stop";
+//                                                                                    return reactiveRedisTemplate.convertAndSend(channel, "STOP")
+//                                                                                            .then(endGame(state, userId, response));
+//                                                                                });
+//                                                                    });
+//                                                        });
+//                                            });
+//                                })
+//                )
+//                .onErrorResume(e -> releaseClaimLock(claimLockKey, userId)
+//                        .then(sendUserError(userId, cardId, "CLAIM_ERROR", "Failed to process bingo claim")));
+//    }
+    public Mono<Void> claimBingo(Long roomId, String userId, Map<String, Object> payload) {
+        log.info("BINGO CLAIM PAYLOAD: {}", payload);
+
+        Long gameId = payload.get("gameId") != null ? Long.valueOf(payload.get("gameId").toString()) : null;
+        String playerName = payload.get("playerName") != null ? payload.get("playerName").toString() : "";
+        String cardId = payload.get("cardId") != null ? payload.get("cardId").toString() : "";
+        @SuppressWarnings("unchecked")
+        List<Integer> markedList = (List<Integer>) payload.get("markedNumbers");
+        String pattern = payload.get("pattern") != null ? payload.get("pattern").toString() : GamePattern.LINE_AND_CORNERS.name();
+
+        if (cardId == null || markedList == null || gameId == null) {
+            return sendUserError(userId, cardId, "INVALID_CLAIM", "Invalid claim data");
+        }
+
+        Set<Integer> claimedMarkedNumbers = new HashSet<>(markedList);
+        String claimLockKey = "game:" + gameId + ":claim-lock";
+        String endLockKey = "game:end-lock:" + roomId; // 🧩 New distributed end lock key
+
+        String luaClaimLock = """
+                if redis.call('exists', KEYS[1]) == 0 then
+                    redis.call('set', KEYS[1], ARGV[1], 'EX', 10)
+                    return 1
+                else
+                    return 0
+                end
+                """;
+
+        RedisScript<Long> acquireClaimLockScript = RedisScript.of(luaClaimLock, Long.class);
+
+        return Mono.defer(() ->
+                        gameStateService.getGameState(roomId)
+                                .flatMap(state -> {
+                                    if (state.isEnded()) return Mono.error(new IllegalStateException("GAME_ENDED"));
+
+                                    return reactiveRedisTemplate.execute(acquireClaimLockScript, List.of(claimLockKey), userId)
+                                            .next()
+                                            .flatMap(acquired -> {
+                                                if (acquired == null || acquired != 1)
+                                                    return Mono.error(new IllegalStateException("LOCK_BUSY"));
+                                                return Mono.just(true);
+                                            });
+                                })
+                )
+                .retryWhen(Retry.backoff(10, Duration.ofMillis(100))
+                        .maxBackoff(Duration.ofSeconds(2))
+                        .filter(e -> e instanceof IllegalStateException && "LOCK_BUSY".equals(e.getMessage()))
+                        .onRetryExhaustedThrow((spec, signal) -> new RuntimeException("Failed to acquire claim lock after retries"))
+                )
+                .onErrorResume(e -> {
+                    if (e instanceof IllegalStateException && "GAME_ENDED".equals(e.getMessage())) {
+                        return sendUserError(userId, cardId, "GAME_ALREADY_COMPLETED", "Game already completed").hasElement();
+                    }
+                    return Mono.error(e);
+                })
+                .flatMap(ignored ->
+                        Mono.zip(
+                                        gameStateService.getAllPlayers(gameId),
+                                        playerStateService.getPlayerCards(gameId, userId)
+                                )
+                                .flatMap(tuple -> {
+                                    Set<String> players = tuple.getT1();
+                                    Map<String, CardInfo> playerCards = tuple.getT2();
+
+                                    if (!players.contains(userId))
+                                        return releaseClaimLock(claimLockKey, userId).then(sendUserError(userId, cardId, "USER_NOT_IN_GAME", "You are not in the game"));
+
+                                    CardInfo cardInfo = playerCards.get(cardId);
+                                    if (cardInfo == null)
+                                        return releaseClaimLock(claimLockKey, userId).then(sendUserError(userId, cardId, "CARD_NOT_FOUND", "Card not found"));
+
+                                    return playerStateService.getMarkedNumbers(gameId, userId, cardId)
+                                            .flatMap(serverMarkedNumbers -> {
+                                                if (!claimedMarkedNumbers.containsAll(serverMarkedNumbers)) {
+                                                    return releaseClaimLock(claimLockKey, userId)
+                                                            .then(sendUserError(userId, cardId, "MARKED_NUMBERS_MISMATCH", "Marked numbers mismatch"));
+                                                }
+
+                                                return Mono.fromCallable(() -> {
+                                                            Map<BingoColumn, List<Integer>> cardNumbers = cardInfo.getNumbers();
+                                                            if (pattern != null && !pattern.isBlank()) {
+                                                                return patternVerifier.verifyPattern(cardNumbers, new HashSet<>(serverMarkedNumbers), pattern);
+                                                            } else {
+                                                                return patternVerifier.verifyLineOrFourCorners(cardNumbers, new HashSet<>(serverMarkedNumbers));
+                                                            }
+                                                        })
+                                                        .subscribeOn(Schedulers.boundedElastic())
+                                                        .flatMap(isWinner -> {
+                                                            if (!Boolean.TRUE.equals(isWinner)) {
+                                                                return releaseClaimLock(claimLockKey, userId)
+                                                                        .then(sendUserError(userId, cardId, "INVALID_BINGO_CLAIM", "Invalid claim"));
+                                                            }
+
+                                                            return gameStateService.getGameState(roomId)
+                                                                    .flatMap(state -> {
+                                                                        if (state.isEnded())
+                                                                            return releaseClaimLock(claimLockKey, userId)
+                                                                                    .then(sendUserError(userId, cardId, "GAME_ALREADY_COMPLETED", "Game already completed"));
+
+                                                                        // 🧩 Acquire distributed end lock before marking game ended
+                                                                        return reactiveRedisTemplate.opsForValue().setIfAbsent(endLockKey, "locked", Duration.ofSeconds(10))
+                                                                                .flatMap(acquired -> {
+                                                                                    if (!Boolean.TRUE.equals(acquired)) {
+                                                                                        log.info("Another instance is already ending game {}.", state.getGameId());
+                                                                                        return releaseClaimLock(claimLockKey, userId)
+                                                                                                .then(sendUserError(userId, cardId, "GAME_ALREADY_COMPLETED", "Game already completed"));
+                                                                                    }
+
+                                                                                    state.setEnded(true);
+                                                                                    state.setStatus(GameStatus.COMPLETED);
+                                                                                    state.setClaimRequested(true);
+                                                                                    state.setStopNumberDrawing(true);
+
+                                                                                    return gameStateService.saveGameStateToRedis(state, roomId)
+                                                                                            .then(saveGameToDatabase(state))
+                                                                                            .then(cardPoolService.getCard(roomId, cardId))
+                                                                                            .flatMap(card -> {
+                                                                                                GameEndResponse response = GameEndResponse.builder()
+                                                                                                        .gameId(state.getGameId())
+                                                                                                        .cardId(cardId)
+                                                                                                        .playerId(userId)
+                                                                                                        .playerName(playerName)
+                                                                                                        .pattern(pattern)
+                                                                                                        .prizeAmount(BigDecimal.ZERO)
+                                                                                                        .hasWinner(true)
+                                                                                                        .winAt(LocalDateTime.now())
+                                                                                                        .markedNumbers(serverMarkedNumbers)
+                                                                                                        .card(card)
+                                                                                                        .build();
+
+                                                                                                String channel = "bingo:room:" + roomId + ":stop";
+                                                                                                return reactiveRedisTemplate.convertAndSend(channel, "STOP")
+                                                                                                        .then(endGame(state, userId, response))
+                                                                                                        .then(reactiveRedisTemplate.delete(endLockKey)) // release end lock
+                                                                                                        .onErrorResume(err ->
+                                                                                                                reactiveRedisTemplate.delete(endLockKey).then(Mono.error(err))
+                                                                                                        );
+                                                                                            });
+                                                                                });
+                                                                    });
+                                                        });
+                                            });
+                                })
+                )
+                .onErrorResume(e -> releaseClaimLock(claimLockKey, userId)
+                        .then(sendUserError(userId, cardId, "CLAIM_ERROR", "Failed to process bingo claim"))).then();
+    }
+
+
+    // Safe lock release helper
+    private Mono<Boolean> releaseClaimLock(String claimLockKey, String userId) {
+        String luaReleaseLock = """
+                if redis.call('get', KEYS[1]) == ARGV[1] then
+                    return redis.call('del', KEYS[1])
+                else
+                    return 0
+                end
+                """;
+
+        RedisScript<Long> releaseLockScript = RedisScript.of(luaReleaseLock, Long.class);
+
+        return reactiveRedisTemplate.execute(releaseLockScript, List.of(claimLockKey), userId)
+                .next()
+                .map(result -> result != null && result == 1)
+                .doOnNext(released -> {
+                    if (released) {
+                        log.debug("Lock released for key {}, user {}", claimLockKey, userId);
+                    } else {
+                        log.debug("No lock released (not owner or already deleted) for key {}, user {}", claimLockKey, userId);
+                    }
+                })
+                .onErrorResume(e -> {
+                    log.error("Error releasing lock for key {}, user {}", claimLockKey, userId, e);
+                    return Mono.just(false);
+                });
+    }
+
+
+    // Helper to send errors
+    private Mono<Void> sendUserError(String userId, String cardId, String errorType, String message) {
+        return publisher.publishUserEvent(userId,
+                Map.of(
+                        "type", "error",
+                        "payload", Map.of(
+                                "message", message,
+                                "errorType", errorType,
+                                "eventType", "bingo.claim",
+                                "cardId", cardId
+                        )
+                )).then();
+    }
+
+    // Lua release lock script
+//    private static final String LUA_RELEASE_CLAIM_LOCK = """
+//            if redis.call("get", KEYS[1]) == ARGV[1] then
+//                return redis.call("del", KEYS[1])
+//            else
+//                return 0
+//            end
+//            """;
+//
+//    private final RedisScript<Long> releaseClaimLockScript = RedisScript.of(LUA_RELEASE_CLAIM_LOCK, Long.class);
+
+//    private Mono<Void> releaseClaimLock(String claimLockKey, String userId) {
+//        return reactiveRedisTemplate.execute(releaseClaimLockScript, List.of(claimLockKey), userId)
+//                .next()
+//                .then();
+//    }
+
+
+//    ======================================================================
+
+
     public Mono<GameState> getOrInitializeGame(Long roomId, String userId, Integer capacity) {
         return gameStateService.getOrInitializeGame(roomId, userId, capacity)
                 .map(gs -> {
-                    log.info("========================CARD POOL============>> CARD POOP SIZE: {}", gs);
                     return gs;
                 });
     }
 
     public Mono<Void> markNumber(Long roomId, Long gameId, String userId, Map<String, Object> payload) {
-        log.info("========================MARK NUMBER PAYLOAD============>> {}", payload);
         String cardId = (String) payload.get("cardId");
         Integer number = (Integer) payload.get("number");
         if (cardId == null || cardId.isBlank() || !payload.containsKey("number") || number == null || number < 1 || number > 75) {

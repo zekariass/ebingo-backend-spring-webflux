@@ -103,6 +103,11 @@ public final class RedisKeys {
         return "game:" + gameId + ":drawingLock";
     }
 
+
+    public static String countdownLockKey(Long gameId) {
+        return "game:" + gameId + ":countdownLock";
+    }
+
     public static String selectedCardsKey(long gameId) {
         return "game:" + gameId + ":selectedCardsIds";
     }

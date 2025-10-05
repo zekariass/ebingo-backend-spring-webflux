@@ -120,9 +120,9 @@ public class BingoPatternVerifier {
             case "ROW" -> verifyAnyRow(card, marked);
             case "COLUMN" -> verifyAnyColumn(card, marked);
             case "DIAGONAL" -> verifyDiagonal(card, marked);
-            case "FOUR_CORNERS" -> verifyFourCorners(card, marked);
+            case "CORNERS" -> verifyFourCorners(card, marked);
             case "LINE" -> verifyLine(card, marked);
-            case "LINE_FOUR_CORNERS" -> verifyLineOrFourCorners(card, marked);
+            case "LINE_AND_CORNERS" -> verifyLineOrFourCorners(card, marked);
             default -> throw new IllegalArgumentException("Unknown pattern: " + pattern);
         };
     }

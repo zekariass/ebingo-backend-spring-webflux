@@ -8,7 +8,6 @@ import reactor.core.publisher.Mono;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Represents the state of a single Bingo game in a room.
@@ -36,48 +35,26 @@ public class GameState {
     // Card Pool
     private final List<CardInfo> currentCardPool = new ArrayList<>();
     private final List<CardInfo> nextCardPool = new ArrayList<>();
-    private final Set<String> allCardIds = new HashSet<>();
+    private Set<String> allCardIds = new HashSet<>();
 
     // Game status flags
     private volatile boolean started = false;       // only one writer -> fine as volatile
     private volatile boolean ended = false;
     private volatile GameStatus status = GameStatus.READY;
 
-    private AtomicBoolean stopNumberDrawing = new AtomicBoolean(false);
-
-
-    // Start game
-    public void startGame() {
-        started = true;
-    }
-
-    // End game safely (only once)
-    public void endGame() {
-        ended = true;
-    }
-
-    // ---------------------------
-    // Reactive-friendly methods
-    // ---------------------------
-
+    private Boolean stopNumberDrawing = false;
+    private Boolean claimRequested = false;
 
     public void setJoinedPlayers(Set<String> userIds) {
         joinedPlayers.clear();
-//        return Mono.fromSupplier(() -> joinedPlayers.addAll(userIds));
         joinedPlayers.addAll(userIds);
     }
 
-    public void setAllCardIds(Set<String> cardIds) {
-        allCardIds.clear();
-        allCardIds.addAll(cardIds);
-    }
+//    public void setAllCardIds(Set<String> cardIds) {
+//        allCardIds.clear();
+//        allCardIds.addAll(cardIds);
+//    }
 
-    /**
-     * Add a drawn number.
-     */
-    public void addDrawnNumber(Integer number) {
-        drawnNumbers.add(number);
-    }
 
     public void setDrawnNumber(LinkedHashSet<Integer> nums) {
         drawnNumbers.clear();
@@ -110,16 +87,5 @@ public class GameState {
         userSelectedCardsIds.clear();
         userSelectedCardsIds.addAll(cardIds);
     }
-
-    public Set<String> getUserSelectedCardsIds() {
-        return Collections.unmodifiableSet(userSelectedCardsIds);
-    }
-
-//    public Mono<Void> setNextCardPool(List<CardInfo> newPool) {
-//        return Mono.fromRunnable(() -> {
-//            nextCardPool.clear();
-//            nextCardPool.addAll(newPool);
-//        });
-//    }
 
 }

@@ -332,8 +332,8 @@ public class PlayerStateService {
     /**
      * Fetch marked numbers for a specific card.
      */
-    public Mono<Set<Integer>> getMarkedNumbers(Long roomId, String userId, String cardId) {
-        String markedKey = RedisKeys.playerMarkedNumbersKey(roomId, userId, cardId);
+    public Mono<Set<Integer>> getMarkedNumbers(Long gameId, String userId, String cardId) {
+        String markedKey = RedisKeys.playerMarkedNumbersKey(gameId, userId, cardId);
         return setOps.members(markedKey)
                 .map(Integer::valueOf)
                 .collect(Collectors.toSet());
