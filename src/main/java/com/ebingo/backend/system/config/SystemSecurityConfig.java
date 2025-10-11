@@ -21,7 +21,6 @@ public class SystemSecurityConfig {
 
     private final CustomAccessDeniedHandler accessDeniedHandler;
     private final CustomAuthenticationEntryPoint authenticationEntryPoint;
-//    private final CustomRoleConverter customRoleConverter;
 
     public SystemSecurityConfig(CustomAccessDeniedHandler accessDeniedHandler,
                                 CustomAuthenticationEntryPoint authenticationEntryPoint) {
@@ -32,14 +31,11 @@ public class SystemSecurityConfig {
     @Bean
     public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http, ReactiveCustomRoleConverter reactiveCustomRoleConverter) {
 
-//        JwtAuthenticationConverter jwtAuthConverter = new JwtAuthenticationConverter();
-//        jwtAuthConverter.setJwtGrantedAuthoritiesConverter(customRoleConverter);
-
         http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .cors(cors -> cors.configurationSource(request -> {
                     CorsConfiguration config = new CorsConfiguration();
-                    config.setAllowedOrigins(List.of("*"));
+                    config.setAllowedOrigins(List.of("https://72.61.160.55"));
                     config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
                     config.setAllowCredentials(true);
                     config.setAllowedHeaders(Collections.singletonList("*"));
@@ -57,11 +53,7 @@ public class SystemSecurityConfig {
                         .pathMatchers("/ws/**").permitAll()
                         .anyExchange().authenticated()
                 )
-//                .oauth2ResourceServer(oauth2 -> oauth2
-//                        .jwt(jwt -> jwt.jwtAuthenticationConverter(
-//                                new ReactiveJwtAuthenticationConverterAdapter(reactiveCustomRoleConverter)
-//                        ))
-//                );
+
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(reactiveCustomRoleConverter))
                 );
