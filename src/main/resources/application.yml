@@ -15,8 +15,12 @@ spring:
       resourceserver:
         jwt:
           jwk-set-uri: ${SUPABASE_JWK_ENDPOINT}
+
   data:
     redis:
+      host: ${REDIS_HOST:redis-ebingo}      # use the Docker service name
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
       timeout: 10s
 
 server:
