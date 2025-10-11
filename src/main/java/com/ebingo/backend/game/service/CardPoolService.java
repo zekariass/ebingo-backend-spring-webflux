@@ -150,37 +150,6 @@ public class CardPoolService {
     }
 
 
-//    public Mono<List<CardInfo>> generateAndStoreNextPool(Long roomId, int capacity) {
-//        // 1. Generate the card pool synchronously
-//        List<CardInfo> cards = BingoCardGenerator.generateCardPool(capacity)
-//                .stream()
-//                .map(card -> new CardInfo(UUID.randomUUID().toString(), card, new HashSet<>(), false))
-//                .collect(Collectors.toList());
-//
-//        // 2. Serialize and store the entire pool
-//        Mono<Void> storePoolMono = Mono.fromCallable(() -> mapper.writeValueAsString(cards))
-//                .subscribeOn(Schedulers.boundedElastic())
-//                .flatMap(json -> redis.opsForValue().set(RedisKeys.nextCardPoolKey(roomId), json))
-//                .then();
-//
-//        // 3. Serialize and store each card individually in parallel
-//        Flux<Void> storeCardsFlux = Flux.fromIterable(cards)
-//                .flatMap(card ->
-//                                Mono.fromCallable(() -> mapper.writeValueAsString(card))
-//                                        .subscribeOn(Schedulers.boundedElastic())
-//                                        .flatMap(cj ->
-//                                                redis.opsForValue().set(RedisKeys.roomCardKey(roomId, card.getCardId()), cj)
-//                                                        .then(redis.opsForSet().add(RedisKeys.roomCardsSetKey(roomId), card.getCardId()))
-//                                        )
-//                        , 10) // parallelism = 10, adjust as needed
-//                .thenMany(Flux.empty()); // we only care about completion
-//
-//        // 4. Combine pool storage and individual card storage
-//        return storePoolMono
-//                .then(storeCardsFlux.then(Mono.just(cards))); // return list of cards after all stored
-//    }
-
-
     public Mono<CardInfo> getCard(Long roomId, String cardId) {
         return redis.opsForValue().get(RedisKeys.roomCardKey(roomId, cardId))
                 .flatMap(json -> {
@@ -199,7 +168,6 @@ public class CardPoolService {
         return redis.opsForValue().get(RedisKeys.currentCardPoolKey(roomId))
                 .flatMap(json -> {
                     try {
-//                        log.info("=========================>>> Current pool: {}", json);
                         List<CardInfo> cards = mapper.readValue(json, new TypeReference<List<CardInfo>>() {
                         });
                         return Mono.just(cards);
@@ -211,29 +179,9 @@ public class CardPoolService {
     }
 
 
-//    public Mono<List<CardInfo>> getNextPool(Long roomId) {
-//        return redis.opsForValue().get(RedisKeys.nextCardPoolKey(roomId))
-//                .flatMap(json -> {
-//                    try {
-//                        List<CardInfo> cards = mapper.readValue(json, new TypeReference<List<CardInfo>>() {
-//                        });
-//                        return Mono.just(cards);
-//                    } catch (Exception e) {
-//                        return Mono.error(e);
-//                    }
-//                })
-//                .switchIfEmpty(Mono.just(List.of())); // no pool yet
-//    }
-
-
     public Mono<Void> deleteCurrentCardPool(Long roomId) {
         return redis.opsForValue().delete(RedisKeys.currentCardPoolKey(roomId)).then();
     }
-
-//    public Mono<Void> deleteNextCardPool(Long roomId) {
-//        return redis.opsForValue().delete(RedisKeys.nextCardPoolKey(roomId)).then();
-//    }
-
 
     public Mono<Boolean> cardExistInRoom(String cardId, Long roomId) {
         String roomCardsSetKey = RedisKeys.roomCardsSetKey(roomId);

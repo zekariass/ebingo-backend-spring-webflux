@@ -6,9 +6,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.r2dbc.spi.ConnectionFactory;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.r2dbc.config.AbstractR2dbcConfiguration;
 import org.springframework.data.r2dbc.config.EnableR2dbcAuditing;
+import org.springframework.transaction.ReactiveTransactionManager;
+import org.springframework.transaction.reactive.TransactionalOperator;
 
 import java.util.List;
 
@@ -38,18 +41,8 @@ public class DatabaseConfig extends AbstractR2dbcConfiguration {
     }
 
 
-//    @Bean
-//    public R2dbcCustomConversions r2dbcCustomConversions(ObjectMapper objectMapper) {
-//        return R2dbcCustomConversions.of(
-//                PostgresDialect.INSTANCE,
-//                List.of(
-//                        new IntegerListToJsonConverter(objectMapper),
-//                        new JsonToIntegerListConverter(objectMapper),
-//                        new JsonToLongListConverter(objectMapper),
-//                        new JsonToStringListConverter(objectMapper),
-//                        new LongListToJsonConverter(objectMapper),
-//                        new StringListToJsonConverter(objectMapper)
-//                )
-//        );
-//    }
+    @Bean
+    public TransactionalOperator transactionalOperator(ReactiveTransactionManager txManager) {
+        return TransactionalOperator.create(txManager);
+    }
 }

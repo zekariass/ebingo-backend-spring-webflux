@@ -4,11 +4,14 @@ import com.ebingo.backend.game.dto.CardInfo;
 import com.ebingo.backend.game.enums.GameStatus;
 import com.ebingo.backend.game.mappers.GameMapper;
 import com.ebingo.backend.game.repository.GameRepository;
+import com.ebingo.backend.game.repository.RoomRepository;
 import com.ebingo.backend.game.service.CardPoolService;
 import com.ebingo.backend.game.service.RedisPublisher;
 import com.ebingo.backend.game.state.GameState;
 import com.ebingo.backend.game.state.PlayerState;
 import com.ebingo.backend.system.redis.RedisKeys;
+import com.ebingo.backend.system.service.SystemConfigService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLockReactive;
@@ -21,11 +24,9 @@ import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
@@ -43,6 +44,10 @@ public class GameStateService {
     private final RedissonReactiveClient redissonReactiveClient;
     private final RedisPublisher publisher;
     private final GameRepository repository;
+    private final SystemConfigService systemConfigService;
+    //    private final RoomService roomService;
+    private final RoomRepository roomRepository;
+    private final ObjectMapper objectMapper;
 //    private final RoomStateService roomStateService;
 
     private static final Duration GAME_STATE_TTL = Duration.ofHours(24);
@@ -57,6 +62,15 @@ public class GameStateService {
                 .flatMap(exists -> {
                     if (exists) {
                         return getGameState(roomId)
+                                .flatMap(gs -> {
+                                    log.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>Game {} found in Redis. {}", gs, gs.getStatus().name());
+                                    if (gs.isEnded() || gs.getStatus().equals(GameStatus.COMPLETED)) {
+                                        return deleteGameState(roomId)
+                                                .then(initializeGameWithLock(roomId, userId, capacity));
+                                    }
+
+                                    return Mono.just(gs);
+                                })
                                 .flatMap(gameState -> playerStateService.getPlayerCardIds(gameState.getGameId(), userId)
                                         .flatMap(uc -> {
                                             gameState.setUserSelectedCardsIds(uc);
@@ -71,18 +85,17 @@ public class GameStateService {
 
     public Mono<GameState> initializeGameWithLock(Long roomId, String userId, int capacity) {
         return initializeGameWithLockWithRetry(roomId, userId, capacity)
-                .flatMap(gs -> {
-                    return cardPoolService.getAllCardIds(roomId)
-                            .flatMap(ids -> {
-                                gs.setAllCardIds(ids);
-                                return Mono.just(gs);
+                .flatMap(gs ->
+                        Mono.zip(
+                                cardPoolService.getAllCardIds(roomId),
+                                playerStateService.getPlayerCardIds(gs.getGameId(), userId)
+                        ).map(tuple -> {
+                            gs.setAllCardIds(tuple.getT1());
+                            gs.setUserSelectedCardsIds(tuple.getT2());
+                            return gs;
+                        })
+                );
 
-                            }).flatMap(gameState -> playerStateService.getPlayerCardIds(gameState.getGameId(), userId)
-                                    .map(cards -> {
-                                        gameState.setUserSelectedCardsIds(cards);
-                                        return gameState;
-                                    }));
-                });
 
     }
 
@@ -134,13 +147,12 @@ public class GameStateService {
     private Mono<GameState> initializeGameWithLockWithRetry(Long roomId, String userId, int capacity) {
         String lockKey = RedisKeys.gameInitLockKey(roomId);
         RLockReactive lock = redissonReactiveClient.getLock(lockKey);
-
         return Mono.defer(() ->
-                        lock.tryLock(0, 10, TimeUnit.SECONDS)
-                                .timeout(Duration.ofSeconds(5)) // safeguard if Redis hangs
+                        lock.tryLock(0, 30, TimeUnit.SECONDS)
+                                .timeout(Duration.ofSeconds(10)) // safeguard if Redis hangs
                                 .flatMap(isLocked -> {
                                     if (Boolean.TRUE.equals(isLocked)) {
-                                        // ✅ Only one instance will enter this block
+                                        // Only one instance will enter this block
                                         return Mono.usingWhen(
                                                 Mono.just(lock),
                                                 l -> initializeGame(roomId, capacity)
@@ -206,8 +218,6 @@ public class GameStateService {
 
 
     public Mono<GameState> initializeGame(Long roomId, Integer capacity) {
-        log.info("============GameStateService4========================>>> CAPACITY RECEIVED {}", capacity);
-
         // 1. Initialize GameState object
         GameState gameState = new GameState();
         gameState.setRoomId(roomId);
@@ -216,35 +226,48 @@ public class GameStateService {
         gameState.setStatus(GameStatus.READY);
         gameState.setStopNumberDrawing(false);
         gameState.setClaimRequested(false);
+        gameState.setCountdownEndTime(null);
 
 
         gameState.setDrawnNumber(new LinkedHashSet<>());
-        gameState.setDisqualifiedPlayers(Set.of());
         gameState.setCurrentCardPool(List.of());
         gameState.setJoinedPlayers(Set.of());
         gameState.setUserSelectedCardsIds(Set.of());
         gameState.setAllCardIds(Set.of());
         gameState.setAllSelectedCardsIds(Set.of());
 
-        return Mono.when(
-                        cardPoolService.generateAndStoreCurrentPool(roomId, capacity)
-                )
-                .then(Mono.just(gameState));
+//        return Mono.when(
+//                        cardPoolService.generateAndStoreCurrentPool(roomId, capacity)
+//                )
+//                .then(Mono.just(gameState));
+
+        return Mono.zip(
+                cardPoolService.generateAndStoreCurrentPool(roomId, capacity),
+                systemConfigService.getSystemConfig("COMMISSION_RATE"),
+                roomRepository.findById(roomId)
+        ).map(tuple -> {
+            var commissionConfig = tuple.getT2();
+            log.info("===============_______========________Commission rate: {}", commissionConfig);
+            log.info("===============_______========________ROOM: {}", tuple.getT3());
+            gameState.setCommissionRate(
+                    Double.parseDouble(commissionConfig.getValue())
+            );
+            gameState.setEntryFee(tuple.getT3().getEntryFee().doubleValue());
+            gameState.setCapacity(tuple.getT3().getCapacity());
+            return gameState;
+        });
 
     }
 
-    // Placeholder for actual DB save logic
+    // DB save logic
     private Mono<GameState> saveGameStateToDb(GameState gameState) {
 
-        return Mono.fromCallable(() -> GameMapper.toEntity(gameState))
+        return Mono.fromCallable(() -> GameMapper.toEntity(gameState, objectMapper))
                 .flatMap(gs -> {
-//                    log.info("====================================================>>>::: GAME: {}", gs);
                     gs.setStartedAt(LocalDateTime.now());
                     return repository.save(gs);
                 })
                 .map(savedGame -> {
-                    // Create a new GameState instead of mutating
-//                    GameState updated = new GameState(gameState);
                     gameState.setGameId(savedGame.getId());
                     return gameState;
                 });
@@ -254,23 +277,30 @@ public class GameStateService {
     public Mono<Boolean> saveGameStateToRedis(GameState gameState, Long roomId) {
         String gameKey = RedisKeys.gameStateKey(roomId);
 
-        Map<String, Object> gameData = Map.of(
-                "gameId", String.valueOf(gameState.getGameId()),
-                "roomId", String.valueOf(gameState.getRoomId()),
-                "started", String.valueOf(gameState.isStarted()),
-                "ended", String.valueOf(gameState.isEnded()),
-                "status", gameState.getStatus().name(),
-                "stopNumberDrawing", String.valueOf(gameState.getStopNumberDrawing()),
-                "claimRequested", gameState.getClaimRequested()
-//                "winnerId", gameState.getWinnerId() != null ? String.valueOf(gameState.getWinnerId()) : ""
-        );
+        Instant countdownEndTime = gameState.getCountdownEndTime();
 
-        // Save game metadata and then set TTL
+        Map<String, Object> gameData = new HashMap<>();
+        gameData.put("gameId", String.valueOf(gameState.getGameId()));
+        gameData.put("roomId", String.valueOf(gameState.getRoomId()));
+        gameData.put("started", String.valueOf(gameState.isStarted()));
+        gameData.put("ended", String.valueOf(gameState.isEnded()));
+        gameData.put("status", gameState.getStatus().name());
+        gameData.put("stopNumberDrawing", String.valueOf(gameState.getStopNumberDrawing()));
+        gameData.put("claimRequested", gameState.getClaimRequested());
+        gameData.put("entryFee", String.valueOf(gameState.getEntryFee()));
+        gameData.put("commissionRate", String.valueOf(gameState.getCommissionRate()));
+        gameData.put("capacity", String.valueOf(gameState.getCapacity()));
+
+        // Add countdownEndTime only if present
+        if (countdownEndTime != null) {
+            gameData.put("countdownEndTime", countdownEndTime.toString());
+        }
+
         return hashOps.putAll(gameKey, gameData)
                 .then(redis.expire(gameKey, GAME_STATE_TTL))
                 .thenReturn(true)
                 .onErrorResume(e -> {
-                    System.err.println("Failed to save game state: " + e.getMessage());
+                    log.error("Failed to save game state for game {}: {}", gameState.getGameId(), e.getMessage(), e);
                     return Mono.just(false);
                 });
     }
@@ -323,7 +353,7 @@ public class GameStateService {
     public Mono<Boolean> savePlayerState(Long gameId, PlayerState playerState) {
         // Delegate to PlayerStateService for actual storage
         return playerStateService.savePlayerState(gameId, playerState)
-                .then(setOps.add(RedisKeys.gamePlayersKey(gameId), playerState.getUserProfileId().toString()))
+                .then(setOps.add(RedisKeys.gamePlayersKey(gameId), playerState.getUserProfileId()))
                 .thenReturn(true)
                 .onErrorResume(e -> {
                     log.error("Failed to save player {} in game {}: {}", playerState.getUserProfileId(), gameId, e.getMessage(), e);
@@ -397,7 +427,7 @@ public class GameStateService {
         return hashOps.entries(gameKey)
                 .collectMap(Map.Entry::getKey, Map.Entry::getValue)
                 .flatMap(gameMeta -> {
-//                    log.info("=======================================>>>> GAME META: {}", gameMeta);
+                    log.info("=======================================>>>> GAME META: {}", gameMeta);
                     if (gameMeta.isEmpty()) {
                         return Mono.empty();
                     }
@@ -417,8 +447,18 @@ public class GameStateService {
                     state.setEnded(Boolean.parseBoolean(gameMeta.get("ended").toString()));
                     state.setStopNumberDrawing(Boolean.parseBoolean(gameMeta.get("stopNumberDrawing").toString()));
                     state.setClaimRequested(Boolean.parseBoolean(gameMeta.get("claimRequested").toString()));
+                    state.setEntryFee(gameMeta.get("entryFee") != null ? Double.parseDouble(gameMeta.get("entryFee").toString()) : 0.0);
+                    state.setCommissionRate(gameMeta.get("commissionRate") != null ? Double.parseDouble(gameMeta.get("commissionRate").toString()) : 0.0);
+                    state.setCapacity(gameMeta.get("capacity") != null ? Integer.parseInt(gameMeta.get("capacity").toString()) : 0);
 
-//                    log.info("====================GAME STATE FROM REDIS===========>>> {}", state);
+                    Object countdownRaw = gameMeta.get("countdownEndTime");
+                    if (countdownRaw != null) {
+                        state.setCountdownEndTime(Instant.parse(countdownRaw.toString()));
+                    } else {
+                        log.warn("Missing countdownEndTime in gameMeta for game {}", state.getGameId());
+                        state.setCountdownEndTime(null);
+                    }
+                    log.info("====================GAME STATE FROM REDIS===========>>> {}", state);
 
                     // Fetch all reactive parts
                     Mono<LinkedHashSet<Integer>> drawnNumbers = getDrawnNumbers(state.getGameId());
@@ -461,7 +501,7 @@ public class GameStateService {
                                                         state.setAllSelectedCardsIds(tuple.getT6());
 
 
-//                                                        state.setUserSelectedCardsIds(tuple.getT6());
+                                                        state.setUserSelectedCardsIds(tuple.getT6());
                                                         return state;
                                                     }))
                             );
@@ -471,6 +511,7 @@ public class GameStateService {
                     return Mono.empty();
                 });
     }
+
 
     // ----------------------------
     // Delete GameState
@@ -483,11 +524,15 @@ public class GameStateService {
                                     RedisKeys.gameStateKey(roomId),
                                     RedisKeys.gameDrawnNumbersKey(gameId),
                                     RedisKeys.gamePlayersKey(gameId),
-                                    RedisKeys.gameDisqualifiedKey(gameId),
                                     RedisKeys.currentCardPoolKey(gameId),
                                     RedisKeys.roomCardsSetKey(roomId)
                             )
-                            .map(count -> count > 0)
+                            .map(count -> {
+
+                                log.info("========>>>>>>>========NUMBER OF DELETED KEYS===>>>>>>=============>>>: {}", count);
+                                return count > 0;
+                            })
+
                             .onErrorReturn(false);
                 })
                 .defaultIfEmpty(false) // ensures that if getGameState is empty, Mono emits false
@@ -546,7 +591,7 @@ public class GameStateService {
 
                     Mono<Set<Long>> resultMono = addUser
                             .then(Mono.defer(() -> setOps.members(playersKey) // fetch all members
-                                    .map(obj -> Long.valueOf(obj.toString()))
+                                    .map(Long::valueOf)
                                     .collect(Collectors.toSet())
                             ));
 

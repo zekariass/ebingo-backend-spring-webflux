@@ -5,7 +5,7 @@ import com.ebingo.backend.game.enums.RoomStatus;
 import lombok.*;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 @Setter
 @Getter
@@ -30,7 +30,7 @@ public class RoomDto {
 
     private Long createdBy;
 
-    private LocalDateTime createdAt;
+    private Instant createdAt;
 
-    private LocalDateTime updatedAt;
+    private Instant updatedAt;
 }

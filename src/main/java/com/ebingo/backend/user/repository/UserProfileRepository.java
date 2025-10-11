@@ -11,6 +11,8 @@ public interface UserProfileRepository extends ReactiveCrudRepository<UserProfil
     // Fetch by supabaseId
     Mono<UserProfile> findBySupabaseId(UUID supabaseId);
 
+    Mono<UserProfile> findByEmail(String email);
+
 //    // Fetch wallet manually in service layer; no join fetch in R2DBC
 //    default Mono<UserProfile> findBySupabaseIdWithWallet(UUID supabaseId) {
 //        return findBySupabaseId(supabaseId)

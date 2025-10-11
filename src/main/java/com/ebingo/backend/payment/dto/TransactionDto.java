@@ -15,12 +15,13 @@ import java.time.Instant;
 @ToString
 public class TransactionDto {
     private Long id;
-    private Long userProfileId;
-    private Long transferTo;
+    private Long playerId;
     private Long paymentMethodId;
     private TransactionType txnType;
     private BigDecimal txnAmount;
     private TransactionStatus status;
+    private String txnRef;
     private String description;
+    private String metaData;
     private Instant createdAt;
 }

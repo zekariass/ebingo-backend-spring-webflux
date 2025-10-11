@@ -4,12 +4,14 @@ import com.ebingo.backend.common.dto.ApiResponse;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
+import javax.naming.AuthenticationException;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -67,6 +69,17 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ResourceNotFoundException.class)
     public Mono<ResponseEntity<ApiResponse<Object>>> handleResourceNotFoundException(ResourceNotFoundException ex, ServerWebExchange exchange) {
         return buildApiResponse(null, HttpStatus.NOT_FOUND, ex.getMessage(), exchange);
+    }
+
+    @ExceptionHandler(AuthorizationDeniedException.class)
+    public Mono<ResponseEntity<ApiResponse<Object>>> handleAuthorizationDeniedException(AuthorizationDeniedException ex, ServerWebExchange exchange) {
+        return buildApiResponse(null, HttpStatus.FORBIDDEN, ex.getMessage(), exchange);
+    }
+
+
+    @ExceptionHandler(AuthenticationException.class)
+    public Mono<ResponseEntity<ApiResponse<Object>>> handleAuthenticationException(AuthorizationDeniedException ex, ServerWebExchange exchange) {
+        return buildApiResponse(null, HttpStatus.UNAUTHORIZED, ex.getMessage(), exchange);
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)

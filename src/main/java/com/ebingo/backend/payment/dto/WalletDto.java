@@ -17,9 +17,9 @@ public class WalletDto {
 
     private BigDecimal totalDeposit;
 
-    private BigDecimal depositBalance;
-
-    private BigDecimal pendingBalance;
+//    private BigDecimal depositBalance;
+//
+//    private BigDecimal pendingBalance;
 
     private BigDecimal welcomeBonus;
 

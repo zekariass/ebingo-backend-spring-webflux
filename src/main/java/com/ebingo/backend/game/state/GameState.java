@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.ToString;
 import reactor.core.publisher.Mono;
 
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -29,7 +30,7 @@ public class GameState {
     private final Set<String> disqualifiedUsers = ConcurrentHashMap.newKeySet();
 
     // Read from Player State
-    private final Set<String> userSelectedCardsIds = new LinkedHashSet<>();
+    private Set<String> userSelectedCardsIds = new LinkedHashSet<>();
     private Set<String> allSelectedCardsIds = new LinkedHashSet<>();
 
     // Card Pool
@@ -44,6 +45,11 @@ public class GameState {
 
     private Boolean stopNumberDrawing = false;
     private Boolean claimRequested = false;
+
+    private Instant countdownEndTime;
+    private Double commissionRate = 0.0;
+    private Double entryFee = 0.0;
+    private Integer capacity = 0;
 
     public void setJoinedPlayers(Set<String> userIds) {
         joinedPlayers.clear();
@@ -83,9 +89,9 @@ public class GameState {
         });
     }
 
-    public void setUserSelectedCardsIds(Set<String> cardIds) {
-        userSelectedCardsIds.clear();
-        userSelectedCardsIds.addAll(cardIds);
-    }
+//    public void setUserSelectedCardsIds(Set<String> cardIds) {
+//        userSelectedCardsIds.clear();
+//        userSelectedCardsIds.addAll(cardIds);
+//    }
 
 }

@@ -26,12 +26,6 @@ public class Wallet {
     @Column("total_deposit")
     private BigDecimal totalDeposit = BigDecimal.ZERO;
 
-    @Column("deposit_balance")
-    private BigDecimal depositBalance = BigDecimal.ZERO;
-
-    @Column("pending_balance")
-    private BigDecimal pendingBalance = BigDecimal.ZERO;
-
     @Column("welcome_bonus")
     private BigDecimal welcomeBonus = BigDecimal.ZERO;
 

@@ -1,15 +1,13 @@
 package com.ebingo.backend.system.config;
 
 import com.ebingo.backend.common.Constants;
-import com.ebingo.backend.system.converters.CustomRoleConverter;
+import com.ebingo.backend.system.converters.ReactiveCustomRoleConverter;
 import com.ebingo.backend.system.exceptions.CustomAccessDeniedHandler;
 import com.ebingo.backend.system.exceptions.CustomAuthenticationEntryPoint;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.method.configuration.EnableReactiveMethodSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
-import org.springframework.security.oauth2.server.resource.authentication.ReactiveJwtAuthenticationConverterAdapter;
 import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 
@@ -18,26 +16,24 @@ import java.util.Collections;
 import java.util.List;
 
 @Configuration
-@EnableMethodSecurity
+@EnableReactiveMethodSecurity
 public class SystemSecurityConfig {
 
     private final CustomAccessDeniedHandler accessDeniedHandler;
     private final CustomAuthenticationEntryPoint authenticationEntryPoint;
-    private final CustomRoleConverter customRoleConverter;
+//    private final CustomRoleConverter customRoleConverter;
 
     public SystemSecurityConfig(CustomAccessDeniedHandler accessDeniedHandler,
-                                CustomAuthenticationEntryPoint authenticationEntryPoint,
-                                CustomRoleConverter customRoleConverter) {
+                                CustomAuthenticationEntryPoint authenticationEntryPoint) {
         this.accessDeniedHandler = accessDeniedHandler;
         this.authenticationEntryPoint = authenticationEntryPoint;
-        this.customRoleConverter = customRoleConverter;
     }
 
     @Bean
-    public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
+    public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http, ReactiveCustomRoleConverter reactiveCustomRoleConverter) {
 
-        JwtAuthenticationConverter jwtAuthConverter = new JwtAuthenticationConverter();
-        jwtAuthConverter.setJwtGrantedAuthoritiesConverter(customRoleConverter);
+//        JwtAuthenticationConverter jwtAuthConverter = new JwtAuthenticationConverter();
+//        jwtAuthConverter.setJwtGrantedAuthoritiesConverter(customRoleConverter);
 
         http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
@@ -61,10 +57,13 @@ public class SystemSecurityConfig {
                         .pathMatchers("/ws/**").permitAll()
                         .anyExchange().authenticated()
                 )
+//                .oauth2ResourceServer(oauth2 -> oauth2
+//                        .jwt(jwt -> jwt.jwtAuthenticationConverter(
+//                                new ReactiveJwtAuthenticationConverterAdapter(reactiveCustomRoleConverter)
+//                        ))
+//                );
                 .oauth2ResourceServer(oauth2 -> oauth2
-                        .jwt(jwt -> jwt.jwtAuthenticationConverter(
-                                new ReactiveJwtAuthenticationConverterAdapter(jwtAuthConverter)
-                        ))
+                        .jwt(jwt -> jwt.jwtAuthenticationConverter(reactiveCustomRoleConverter))
                 );
 
         return http.build();

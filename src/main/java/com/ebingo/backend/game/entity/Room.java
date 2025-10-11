@@ -13,7 +13,7 @@ import org.springframework.data.relational.core.mapping.Column;
 import org.springframework.data.relational.core.mapping.Table;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 @Table("room")
 @Data
@@ -44,10 +44,10 @@ public class Room {
 
     @CreatedDate
     @Column("created_at")
-    private LocalDateTime createdAt;
+    private Instant createdAt;
 
     @LastModifiedDate
     @Column("updated_at")
-    private LocalDateTime updatedAt;
+    private Instant updatedAt;
 }
 

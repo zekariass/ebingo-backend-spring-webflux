@@ -147,6 +147,13 @@
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- https://mvnrepository.com/artifact/io.github.cdimascio/java-dotenv -->
+        <dependency>
+            <groupId>io.github.cdimascio</groupId>
+            <artifactId>java-dotenv</artifactId>
+            <version>5.2.2</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -173,6 +180,7 @@
                             <artifactId>lombok</artifactId>
                         </exclude>
                     </excludes>
+                    <layers enabled="true"/>
                 </configuration>
             </plugin>
         </plugins>

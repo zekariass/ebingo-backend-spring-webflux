@@ -63,6 +63,21 @@ public final class UserProfileMapper {
         return userProfile;
     }
 
+    public static UserProfile toEntity(UserProfileDto userProfileDto) {
+        if (userProfileDto == null) return null;
+        UserProfile userProfile = new UserProfile();
+        userProfile.setSupabaseId(userProfileDto.getSupabaseId());
+        userProfile.setFirstName(userProfileDto.getFirstName());
+        userProfile.setLastName(userProfileDto.getLastName());
+        userProfile.setNickName(userProfileDto.getNickName());
+        userProfile.setEmail(userProfileDto.getEmail());
+        userProfile.setPhone(userProfileDto.getPhone());
+        userProfile.setDateOfBirth(userProfileDto.getDateOfBirth());
+        userProfile.setStatus(UserStatus.ACTIVE); // Default status
+        userProfile.setRole(UserRole.PLAYER);
+        return userProfile;
+    }
+
     public static UserProfile toEntity(UserProfileUpdateDto userProfileDto, UserProfile existingUserProfile) {
 
         if (userProfileDto == null) return null;

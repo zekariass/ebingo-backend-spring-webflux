@@ -9,27 +9,39 @@ import reactor.core.publisher.Mono;
 public interface TransactionRepository extends ReactiveCrudRepository<Transaction, Long> {
     // CreatedAt sorting
     @Query("SELECT * FROM transaction " +
-            "WHERE user_profile_id = :userProfileId " +
+            "WHERE player_id = :userProfileId " +
             "ORDER BY created_at DESC " +
             "LIMIT :limit OFFSET :offset")
-    Flux<Transaction> findByUserProfileIdOrderByCreatedAtDesc(Long userProfileId, int limit, long offset);
+    Flux<Transaction> findByPlayerIdOrderByCreatedAtDesc(Long userProfileId, int limit, long offset);
 
     // TxnAmount sorting
     @Query("SELECT * FROM transaction " +
-            "WHERE user_profile_id = :userProfileId " +
+            "WHERE player_id = :userProfileId " +
             "ORDER BY txn_amount DESC " +
             "LIMIT :limit OFFSET :offset")
-    Flux<Transaction> findByUserProfileIdOrderByTxnAmountDesc(Long userProfileId, int limit, long offset);
+    Flux<Transaction> findByPlayerIdOrderByTxnAmountDesc(Long userProfileId, int limit, long offset);
 
     // Default (by id)
     @Query("SELECT * FROM transaction " +
-            "WHERE user_profile_id = :userProfileId " +
+            "WHERE player_id = :userProfileId " +
             "ORDER BY id DESC " +
             "LIMIT :limit OFFSET :offset")
-    Flux<Transaction> findByUserProfileIdOrderByIdDesc(Long userProfileId, int limit, long offset);
+    Flux<Transaction> findByPlayerIdOrderByIdDesc(Long userProfileId, int limit, long offset);
 
     @Query("SELECT * FROM transaction " +
             "WHERE id = :id " +
-            "AND user_profile_id = :userProfileId")
-    Mono<Transaction> findByIdAndUserProfileId(Long id, Long userProfileId);
+            "AND player_id = :userProfileId")
+    Mono<Transaction> findByIdAndPlayerId(Long id, Long userProfileId);
+
+
+    @Query("SELECT * FROM transaction WHERE status = :status AND txn_type = :name ORDER BY txn_amount DESC LIMIT :limit OFFSET :offset")
+    Flux<Transaction> findByStatusAndTxnTypeOrderByTxnAmountDesc(String status, String name, int limit, long offset);
+
+    @Query("SELECT * FROM transaction WHERE status = :status AND txn_type = :name ORDER BY created_at DESC LIMIT :limit OFFSET :offset")
+    Flux<Transaction> findByStatusAndTxnTypeOrderByCreatedAtDesc(String status, String name, int limit, long offset);
+
+    @Query("SELECT * FROM transaction WHERE status = :status AND txn_type = :name ORDER BY id DESC LIMIT :limit OFFSET :offset")
+    Flux<Transaction> findByStatusAndTxnTypeOrderByIdDesc(String status, String name, int limit, long offset);
+
+    Mono<Transaction> findByTxnRef(String txnRef);
 }

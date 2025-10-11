@@ -48,5 +48,25 @@ public class UserProfileServiceImpl implements UserProfileService {
                 .as(operator::transactional);
     }
 
+    @Override
+    public Mono<UserProfileDto> getUserProfileById(Long receiverId) {
+        return userProfileRepository.findById(receiverId)
+                .map(UserProfileMapper::toDto)
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("User not found")))
+                .doOnSubscribe(s -> log.info("Fetching user profile: {}", receiverId))
+                .doOnSuccess(dto -> log.info("Completed fetching user profile: {}", receiverId))
+                .doOnError(e -> log.error("Failed to fetch user profile: {}", e.getMessage(), e));
+    }
+
+    @Override
+    public Mono<UserProfileDto> getUserEmail(String email) {
+        return userProfileRepository.findByEmail(email)
+                .map(UserProfileMapper::toDto)
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("User not found")))
+                .doOnSubscribe(s -> log.info("Fetching user profile by email: {}", email))
+                .doOnSuccess(dto -> log.info("Completed fetching user profile by email: {}", email))
+                .doOnError(e -> log.error("Failed to fetch user profile by email: {}", e.getMessage(), e));
+    }
+
 
 }

@@ -12,6 +12,8 @@ import org.springframework.data.annotation.Transient;
 import org.springframework.data.relational.core.mapping.Column;
 import org.springframework.data.relational.core.mapping.Table;
 
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,17 +32,30 @@ public class Game {
     @Column("room_id")
     private Long roomId;
 
-    @Column("joined_players")
+    @Column("joined_players_ids")
     private String joinedPlayersJson;
+
+    @Column("players_count")
+    private Integer playersCount;
+
+    @Column("entries_count")
+    private Integer entriesCount;
 
     @Column("drawn_numbers")
     private String drawnNumberJson;
 
-    @Column("disqualified_users")
-    private String disqualifiedUsersJson;
-
     @Column("all_card_ids")
     private String allCardIdsJson;
+
+    @Column("prize_amount")
+    private BigDecimal prizeAmount;
+
+    @Column("commission_amount")
+    private BigDecimal commissionAmount;
+
+    private Integer capacity;
+
+    private BigDecimal entryFee;
 
     @Column("started")
     private boolean started = false;
@@ -51,9 +66,6 @@ public class Game {
     @Column("status")
     private GameStatus status;
 
-    @Column("stop_number_drawing")
-    private boolean stopNumberDrawing = false;
-
     @Column("started_at")
     private LocalDateTime startedAt;
 
@@ -62,11 +74,11 @@ public class Game {
 
     @CreatedDate
     @Column("created_at")
-    private LocalDateTime createdAt;
+    private Instant createdAt;
 
     @LastModifiedDate
     @Column("updated_at")
-    private LocalDateTime updatedAt;
+    private Instant updatedAt;
 
 
     @Transient

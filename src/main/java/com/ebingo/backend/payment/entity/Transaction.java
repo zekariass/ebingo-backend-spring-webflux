@@ -23,11 +23,11 @@ public class Transaction {
     @Id
     private Long id;
 
-    @Column("user_profile_id")
-    private Long userProfileId;
+    @Column("player_id")
+    private Long playerId;
 
-    @Column("transfer_to")
-    private Long transferTo;
+    @Column("txn_ref")
+    private String txnRef;
 
     @Column("payment_method_id")
     private Long paymentMethodId;
@@ -41,6 +41,15 @@ public class Transaction {
     private TransactionStatus status;
 
     private String description;
+
+    @Column("meta_data")
+    private String metaData; // JSON string
+
+    @Column("approved_by")
+    private Long approvedBy;
+
+    @Column("approved_at")
+    private Instant approvedAt;
 
     @CreatedDate
     @Column("created_at")

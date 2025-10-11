@@ -184,7 +184,6 @@ public class GameWebSocketHandler implements WebSocketHandler {
                 Long gameEventId3 = (payload.get("gameId") != null) ? Long.valueOf(payload.get("gameId").toString()) : null;
                 BigDecimal fee3 = (payload.get("fee") != null) ? BigDecimal.valueOf(Double.parseDouble(payload.get("fee").toString())) : null;
                 Integer capacity3 = (payload.get("capacity") != null) ? Integer.parseInt(payload.get("capacity").toString()) : 100;
-                log.info("============GameWebSocketHandler========================>>> params: {}, {}, {}", gameEventId3, fee3, capacity3);
                 return gameService.playerJoin(roomId, gameEventId3, userId, capacity3, fee3).then();
 
             case "game.playerLeaveRequest":
@@ -201,6 +200,10 @@ public class GameWebSocketHandler implements WebSocketHandler {
 
             case "game.bingoClaimRequest":
                 return gameService.claimBingo(roomId, userId, payload);
+            case "ping":
+                return publisher.publishEvent(RedisKeys.roomChannel(roomId),
+                        Map.of("type", "pong",
+                                "payload", Map.of())).then();
 
             default:
                 return publisher.publishUserEvent(userId,
