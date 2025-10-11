@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout source code
+      # 1️⃣ Checkout code
       - name: Checkout code
         uses: actions/checkout@v3
 
@@ -45,11 +45,10 @@ jobs:
           script: |
             cd /opt/ebingo-server-backend
 
-            echo "🚀 Pulling new Docker image..."
+            echo "🚀 Pulling latest Docker images..."
             docker compose pull
 
-            echo "🔄 Updating app container..."
-            # Restart only the app container using the updated image
+            echo "🔄 Restarting app container with fixed JVM options..."
             docker compose up -d --no-deps --build app
 
             echo "✅ Deployment complete!"

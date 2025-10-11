@@ -8,7 +8,8 @@ services:
       - "127.0.0.1:8080:8080"  # Only accessible from host (Nginx reverse proxy)
     env_file: .env
     environment:
-      - JAVA_OPTS=${JAVA_OPTS:-"-Xms512m -Xmx2g"}
+      - JAVA_OPTS=-Xms512m -Xmx2g
+    command: sh -c "java $JAVA_OPTS -jar app.jar"
     depends_on:
       postgres-ebingo:
         condition: service_healthy
