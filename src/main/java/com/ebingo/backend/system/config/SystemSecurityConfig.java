@@ -39,7 +39,7 @@ public class SystemSecurityConfig {
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .cors(cors -> cors.configurationSource(request -> {
                     CorsConfiguration config = new CorsConfiguration();
-                    config.setAllowedOrigins(Arrays.asList("http://localhost:4200", "http://localhost:8080", "http://localhost:3000"));
+                    config.setAllowedOrigins(List.of("*"));
                     config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
                     config.setAllowCredentials(true);
                     config.setAllowedHeaders(Collections.singletonList("*"));
