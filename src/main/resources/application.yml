@@ -2,14 +2,14 @@ spring:
   application:
     name: ebingo-server-backend
   r2dbc:
-    url: ${EBINGO_DB_URL:}
-    username: ${EBINGO_DB_USER:}
-    password: ${EBINGO_DB_PASSWORD:}
+    url: ${EBINGO_DB_URL}
+    username: ${EBINGO_DB_USER}
+    password: ${EBINGO_DB_PASSWORD}
   flyway:
     enabled: ${FLYWAY_ENABLED:false}
-    url: ${EBINGO_DB_URL:r2dbc:postgresql://localhost:5432/ebingo}
-    user: ${EBINGO_DB_USER:ebingo}
-    password: ${EBINGO_DB_PASSWORD:Zakinfo@23}
+    url: ${EBINGO_DB_URL}
+    user: ${EBINGO_DB_USER}
+    password: ${EBINGO_DB_PASSWORD}
   security:
     oauth2:
       resourceserver:
@@ -18,9 +18,9 @@ spring:
 
   data:
     redis:
-      host: ${REDIS_HOST:redis-ebingo}      # use the Docker service name
-      port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD}
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT}
+      #      password: ${REDIS_PASSWORD}
       timeout: 10s
 
 server:

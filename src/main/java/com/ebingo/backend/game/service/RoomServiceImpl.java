@@ -53,11 +53,16 @@ public class RoomServiceImpl implements RoomService {
 
     @Override
     public Flux<RoomDto> getAllRooms() {
-        log.info("Getting all rooms");
         return roomRepository.findAll()
-                .onErrorMap(e -> new RuntimeException("Error getting all rooms", e))
-                .map(RoomMapper::toDto);
+                .doOnSubscribe(s -> log.info("Fetching all rooms"))
+                .map(RoomMapper::toDto)
+                .doOnNext(dto -> log.debug("Mapped room: {}", dto))
+                .onErrorMap(e -> {
+                    log.error("Error fetching rooms", e);
+                    return new RuntimeException("Error getting all rooms", e);
+                });
     }
+
 
     @Override
     public Mono<RoomDto> updateRoomById(Long id, RoomUpdateDto roomDto) {

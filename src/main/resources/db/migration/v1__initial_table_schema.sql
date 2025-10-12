@@ -9,7 +9,7 @@ CREATE TABLE user_profile (
     phone VARCHAR(20),
     date_of_birth DATE NOT NULL DEFAULT '2000-01-01',
     status VARCHAR(30) NOT NULL,-- 'ACTIVE', 'BANNED'
-    role VARCHAR(30) NOT NULL;-- 'PLAYER', 'MODERATOR', 'ADMIN'
+    role VARCHAR(30) NOT NULL,-- 'PLAYER', 'MODERATOR', 'ADMIN'
     daily_free_play_count INT DEFAULT 3,
     is_deleted BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -211,60 +211,3 @@ CREATE TABLE system_config (
 
 -- Indexes for system_config
 CREATE INDEX idx_system_config_name ON system_config(name);
-
--- error_report Table
-CREATE TABLE error_report (
-    id BIGSERIAL PRIMARY KEY,
-    reported_by BIGINT NOT NULL,
-    error_about VARCHAR(255),
-    error_text TEXT NOT NULL,
-    reported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_error_report_reported_by FOREIGN KEY (reported_by) REFERENCES user_profile(id) ON DELETE CASCADE
-);
--- Indexes for error_report
-CREATE INDEX idx_error_report_reported_by ON error_report(reported_by);
-
-
---
---
----- support_request Table
---CREATE TABLE support_request (
---    id BIGSERIAL PRIMARY KEY,
---    request_reference TEXT NOT NULL UNIQUE,
---    request_title VARCHAR(255) NOT NULL,
---    request_text TEXT NOT NULL,
---    image_urls JSONB DEFAULT '[]'::jsonb,
---    requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
---    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
---    CONSTRAINT uq_support_request_reference UNIQUE (request_reference)
---);
-
--- char_room Table
---CREATE TABLE chat_room (
---    id BIGSERIAL PRIMARY KEY,
---    room_name VARCHAR(100) NOT NULL UNIQUE,
---    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
---    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
---    CONSTRAINT uq_char_room_name UNIQUE (room_name)
---);
---
----- chat_message Table
---CREATE TABLE chat_message (
---    id BIGSERIAL PRIMARY KEY,
---    room_id BIGINT NOT NULL,
---    sender_id BIGINT NOT NULL,
---    message TEXT NOT NULL,
---    is_deleted BOOLEAN DEFAULT FALSE,
---    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
---    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
---    CONSTRAINT fk_chat_message_room FOREIGN KEY (room_id) REFERENCES char_room(id) ON DELETE CASCADE,
---    CONSTRAINT fk_chat_message_sender FOREIGN KEY (sender_id) REFERENCES user_profile(id) ON DELETE CASCADE
---);
---
----- Indexes for chat_message
---CREATE INDEX idx_chat_message_room_id ON chat_message(room_id);
---CREATE INDEX idx_chat_message_sender_id ON chat_message(sender_id);
---CREATE INDEX idx_chat_message_sent_at ON chat_message(sent_at);
-
-

@@ -23,6 +23,25 @@
 //    }
 //}
 
+//package com.ebingo.backend.system.redis;
+
+//
+//@Configuration
+//public class RedissonConfig {
+//
+//    @Bean(destroyMethod = "shutdown")
+//    public RedissonReactiveClient redissonReactiveClient() {
+//        Config config = new Config();
+//        config.useSingleServer()
+//                .setAddress("redis://localhost:6379") // change if needed
+//                .setConnectionMinimumIdleSize(1)
+//                .setConnectionPoolSize(10);
+//
+//        RedissonClient client = Redisson.create(config);
+//        return client.reactive();
+//    }
+//}
+
 
 package com.ebingo.backend.system.redis;
 
@@ -51,12 +70,18 @@ public class RedissonConfig {
         Config config = new Config();
         config.useSingleServer()
                 .setAddress("redis://" + redisHost + ":" + redisPort)
-                .setPassword(redisPassword.isEmpty() ? null : redisPassword)
-                .setConnectionMinimumIdleSize(1)
-                .setConnectionPoolSize(10);
+                .setConnectionMinimumIdleSize(8)
+                .setConnectionPoolSize(32)
+                .setSubscriptionConnectionPoolSize(16)
+                .setIdleConnectionTimeout(10000)
+                .setConnectTimeout(3000)
+                .setTimeout(10000);
 
         RedissonClient client = Redisson.create(config);
         return client.reactive();
     }
 }
+
+
+
 

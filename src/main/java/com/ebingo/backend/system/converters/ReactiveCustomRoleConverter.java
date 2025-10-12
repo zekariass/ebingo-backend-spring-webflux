@@ -107,7 +107,7 @@ public class ReactiveCustomRoleConverter implements Converter<Jwt, Mono<Abstract
         // Fetch role from local DB reactively and merge with JWT roles
         return userProfileService.getUserProfileBySupabaseId(userId)
                 .map(profile -> {
-                    log.info("===============================>>>> AUTHORITIES ===================>>>>: {}", profile.getRole().name().toUpperCase());
+//                    log.info("===============================>>>> AUTHORITIES ===================>>>>: {}", profile.getRole().name().toUpperCase());
 
                     Set<GrantedAuthority> merged = new HashSet<>(authorities);
                     merged.add(new SimpleGrantedAuthority(ROLE_PREFIX + profile.getRole().name().toUpperCase()));

@@ -35,7 +35,10 @@ public class SystemSecurityConfig {
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .cors(cors -> cors.configurationSource(request -> {
                     CorsConfiguration config = new CorsConfiguration();
-                    config.setAllowedOrigins(List.of("https://72.61.160.55"));
+                    config.setAllowedOrigins(List.of("http://localhost:3000",
+                            "https://ebingo-frontend-web.vercel.app",
+                            "https://ebingo-frontend-web-git-main-zekarias-semegnew-negeses-projects.vercel.app",
+                            "https://ebingo-frontend-rfsu1ye5j-zekarias-semegnew-negeses-projects.vercel.app"));
                     config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
                     config.setAllowCredentials(true);
                     config.setAllowedHeaders(Collections.singletonList("*"));

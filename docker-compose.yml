@@ -1,9 +1,9 @@
 services:
   app:
-    #    image: zekariasn/ebingo-backend:stable-2025.10.11
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: zekariasn/ebingo-backend:stable-2025.10.11
+    #    build:
+    #      context: .
+    #      dockerfile: Dockerfile
     container_name: ebingo-backend
     ports:
       - "127.0.0.1:8080:8080"

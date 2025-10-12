@@ -44,12 +44,13 @@ public class GameWebSocketHandler implements WebSocketHandler {
     private final CardSelectionService cardSelectionService;
     private final RedisPublisher publisher;
     private final GameService gameService;
-    private final ReactiveJwtDecoder jwtDecoder; // ✅ inject decoder
+    private final ReactiveJwtDecoder jwtDecoder;
 
     private final Map<String, Sinks.Many<WSMessage>> sessionSinks = new ConcurrentHashMap<>();
 
     @Override
     public Mono<Void> handle(WebSocketSession session) {
+        log.info("======================>>> New WS connection: {}", session.getId());
         MultiValueMap<String, String> params = UriComponentsBuilder
                 .fromUri(session.getHandshakeInfo().getUri())
                 .build()
