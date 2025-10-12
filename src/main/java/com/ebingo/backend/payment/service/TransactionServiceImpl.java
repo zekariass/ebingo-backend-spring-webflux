@@ -99,42 +99,89 @@ public class TransactionServiceImpl implements TransactionService {
     }
 
 
+//    @Override
+//    public Mono<TransactionDto> confirmDepositOfflineByAdmin(String txnRef, String metaData, String approverSupabaseId) {
+//        Mono<UserProfileDto> approver = userProfileService.getUserProfileBySupabaseId(UUID.fromString(approverSupabaseId));
+//
+//        Mono<TransactionDto> txMono = transactionRepository.findByTxnRef(txnRef)
+//                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Transaction not found")))
+//                .flatMap(txn -> {
+//                    txn.setStatus(TransactionStatus.COMPLETED);
+//                    txn.setMetaData(metaData);
+//
+//                    return approver.flatMap(up -> {
+//                                txn.setApprovedBy(up.getId());
+//                                txn.setApprovedAt(Instant.now());
+//                                return Mono.just(txn);
+//                            }).then(transactionRepository.save(txn))
+//                            .flatMap(savedTxn ->
+//                                    walletService.getWalletByUserProfileId(savedTxn.getPlayerId())
+//                                            // If wallet does not exist, create it
+//                                            .switchIfEmpty(
+//                                                    userProfileService.getUserProfileById(savedTxn.getPlayerId())
+//                                                            .switchIfEmpty(Mono.error(new ResourceNotFoundException("Player profile not found")))
+//                                                            .flatMap(profile -> walletService.createWallet(UserProfileMapper.toEntity(profile)))
+//                                            )
+//                                            // Update wallet using helper
+//                                            .flatMap(walletDto -> {
+//                                                Wallet wallet = WalletMapper.toEntity(walletDto);
+//                                                return depositTransferService.creditReceiverWalletBalanceForDeposit(wallet, savedTxn.getTxnAmount())
+//                                                        .flatMap(walletService::saveWallet)
+//                                                        .thenReturn(savedTxn);
+//                                            })
+//                            );
+//                })
+//                .map(TransactionMapper::toDto);
+//
+//        // Wrap in reactive transaction
+//        return transactionalOperator.transactional(txMono)
+//                .doOnSubscribe(s -> log.info("Confirming offline deposit: {}", txnRef))
+//                .doOnSuccess(tx -> log.info("Deposit confirmed successfully: {}", tx))
+//                .doOnError(e -> log.error("Failed to confirm deposit offline: {}", e.getMessage(), e));
+//    }
+
+
     @Override
-    public Mono<TransactionDto> confirmDepositOfflineByAdmin(String txnRef, String metaData, String approverSupabaseId) {
-        Mono<UserProfileDto> approver = userProfileService.getUserProfileBySupabaseId(UUID.fromString(approverSupabaseId));
+    public Mono<TransactionDto> confirmDepositOfflineByAdmin(
+            String txnRef, String metaData, String approverSupabaseId) {
 
-        Mono<TransactionDto> txMono = transactionRepository.findByTxnRef(txnRef)
-                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Transaction not found")))
-                .flatMap(txn -> {
-                    txn.setStatus(TransactionStatus.COMPLETED);
-                    txn.setMetaData(metaData);
+        // Get approver info
+        Mono<UserProfileDto> approverMono = userProfileService.getUserProfileBySupabaseId(
+                UUID.fromString(approverSupabaseId));
 
-                    return approver.flatMap(up -> {
-                                txn.setApprovedBy(up.getId());
-                                txn.setApprovedAt(Instant.now());
-                                return Mono.just(txn);
-                            }).then(transactionRepository.save(txn))
-                            .flatMap(savedTxn ->
-                                    walletService.getWalletByUserProfileId(savedTxn.getPlayerId())
-                                            // If wallet does not exist, create it
+        // Wrap the whole flow in transactional operator
+        return transactionalOperator.transactional(
+
+                        transactionRepository.findByTxnRef(txnRef)
+                                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Transaction not found")))
+                                .flatMap(txn ->
+                                        approverMono.flatMap(approver -> {
+                                            txn.setStatus(TransactionStatus.COMPLETED);
+                                            txn.setMetaData(metaData);
+                                            txn.setApprovedBy(approver.getId());
+                                            txn.setApprovedAt(Instant.now());
+                                            return transactionRepository.save(txn);
+                                        })
+                                )
+                                .flatMap(savedTxn -> {
+                                    Long playerId = savedTxn.getPlayerId();
+
+                                    return walletService.getWalletByUserProfileId(playerId)
                                             .switchIfEmpty(
-                                                    userProfileService.getUserProfileById(savedTxn.getPlayerId())
+                                                    userProfileService.getUserProfileById(playerId)
                                                             .switchIfEmpty(Mono.error(new ResourceNotFoundException("Player profile not found")))
                                                             .flatMap(profile -> walletService.createWallet(UserProfileMapper.toEntity(profile)))
                                             )
-                                            // Update wallet using helper
                                             .flatMap(walletDto -> {
                                                 Wallet wallet = WalletMapper.toEntity(walletDto);
-                                                return depositTransferService.creditReceiverWalletBalanceForDeposit(wallet, savedTxn.getTxnAmount())
+                                                return depositTransferService
+                                                        .creditReceiverWalletBalanceForDeposit(wallet, savedTxn.getTxnAmount())
                                                         .flatMap(walletService::saveWallet)
                                                         .thenReturn(savedTxn);
-                                            })
-                            );
-                })
-                .map(TransactionMapper::toDto);
-
-        // Wrap in reactive transaction
-        return transactionalOperator.transactional(txMono)
+                                            });
+                                })
+                                .map(TransactionMapper::toDto)
+                )
                 .doOnSubscribe(s -> log.info("Confirming offline deposit: {}", txnRef))
                 .doOnSuccess(tx -> log.info("Deposit confirmed successfully: {}", tx))
                 .doOnError(e -> log.error("Failed to confirm deposit offline: {}", e.getMessage(), e));

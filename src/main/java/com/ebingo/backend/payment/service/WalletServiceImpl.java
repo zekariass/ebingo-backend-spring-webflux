@@ -8,6 +8,7 @@ import com.ebingo.backend.payment.repository.WalletRepository;
 import com.ebingo.backend.system.exceptions.InsufficientBalanceException;
 import com.ebingo.backend.system.exceptions.ResourceNotFoundException;
 import com.ebingo.backend.user.entity.UserProfile;
+import com.ebingo.backend.user.mappers.UserProfileMapper;
 import com.ebingo.backend.user.service.UserProfileService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,7 +31,7 @@ public class WalletServiceImpl implements WalletService {
 
     @Override
     public Mono<WalletDto> createWallet(UserProfile userProfile) {
-        log.info("Creating wallet for user with profile id: {}", userProfile.getId());
+        log.info("Creating wallet for user with profile: {}", UserProfileMapper.toDto(userProfile));
 
         Wallet wallet = new Wallet();
         wallet.setUserProfileId(userProfile.getId());

@@ -27,10 +27,10 @@ public class Wallet {
     private BigDecimal totalDeposit = BigDecimal.ZERO;
 
     @Column("welcome_bonus")
-    private BigDecimal welcomeBonus = BigDecimal.ZERO;
+    private BigDecimal welcomeBonus = BigDecimal.valueOf(20);
 
     @Column("available_welcome_bonus")
-    private BigDecimal availableWelcomeBonus = BigDecimal.ZERO;
+    private BigDecimal availableWelcomeBonus = BigDecimal.valueOf(20);
 
     @Column("referral_bonus")
     private BigDecimal referralBonus = BigDecimal.ZERO;
@@ -48,7 +48,7 @@ public class Wallet {
     private BigDecimal totalWithdrawal = BigDecimal.ZERO;
 
     @Column("total_available_balance") // The sum of all available balances
-    private BigDecimal totalAvailableBalance = BigDecimal.ZERO;
+    private BigDecimal totalAvailableBalance = BigDecimal.valueOf(20);
 
     @Column("available_to_withdraw") // The amount available for withdrawal
     private BigDecimal availableToWithdraw = BigDecimal.ZERO; // totalAvailableBalance - availableWelcomeBonus - availableReferralBonus

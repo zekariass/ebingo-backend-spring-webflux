@@ -66,6 +66,7 @@ public final class UserProfileMapper {
     public static UserProfile toEntity(UserProfileDto userProfileDto) {
         if (userProfileDto == null) return null;
         UserProfile userProfile = new UserProfile();
+        userProfile.setId(userProfileDto.getId());
         userProfile.setSupabaseId(userProfileDto.getSupabaseId());
         userProfile.setFirstName(userProfileDto.getFirstName());
         userProfile.setLastName(userProfileDto.getLastName());
@@ -74,7 +75,7 @@ public final class UserProfileMapper {
         userProfile.setPhone(userProfileDto.getPhone());
         userProfile.setDateOfBirth(userProfileDto.getDateOfBirth());
         userProfile.setStatus(UserStatus.ACTIVE); // Default status
-        userProfile.setRole(UserRole.PLAYER);
+        userProfile.setRole(userProfileDto.getRole() != null ? userProfileDto.getRole() : UserRole.PLAYER);
         return userProfile;
     }
 
